@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
@@ -8,7 +8,12 @@ function App() {
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
 
+  const initialized = useRef(false);
+
   useEffect(() => {
+    if (initialized.current) return;
+    initialized.current = true;
+
     (async () => {
       const ws = new EnclaveWebSocket("ws://localhost:3415");
 
@@ -20,7 +25,7 @@ function App() {
         hostname: "",
       });
 
-      // console.log(await ws.read());
+      console.log(await ws.read());
     })();
   }, []);
 
