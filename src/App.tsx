@@ -3,6 +3,11 @@ import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
 import { EnclaveWebSocket } from "./protocol/ws";
+import * as ed from "@noble/ed25519";
+import { base58 } from "@scure/base";
+import { sha512 } from "@noble/hashes/sha2.js";
+
+ed.hashes.sha512 = sha512;
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
@@ -17,12 +22,20 @@ function App() {
     (async () => {
       const ws = new EnclaveWebSocket("ws://localhost:3415");
 
+      const timestamp = Date.now();
+      const hostname = "localhost:3415";
+
+      const msg = new TextEncoder().encode(`${timestamp}@${hostname}`);
+
+      const PRIVATE_KEY = ed.utils.randomSecretKey();
+
       ws.send({
         method: "Initialize",
-        public_key: "",
-        signature: "",
-        timestamp: 0,
-        hostname: "",
+        public_key: base58.encode(ed.getPublicKey(PRIVATE_KEY)),
+        signature: base58.encode(ed.sign(msg, PRIVATE_KEY)),
+
+        timestamp,
+        hostname,
       });
 
       console.log(await ws.read());
