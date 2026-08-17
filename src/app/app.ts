@@ -23,10 +23,8 @@ export default class Enclave {
     this.clientSecretKey = ed.utils.randomSecretKey();
     this.clientPublicKey = ed.getPublicKey(this.clientSecretKey);
 
-    this.server = new EnclaveServer(
-      "localhost:3415",
-      this.clientSecretKey,
-      this.clientPublicKey,
-    );
+    this.server = new EnclaveServer("localhost:3415");
+
+    this.server.connect(this.clientPublicKey, this.clientSecretKey);
   }
 }
