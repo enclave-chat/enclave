@@ -27,18 +27,49 @@ function App() {
 
       const msg = new TextEncoder().encode(`${timestamp}@${hostname}`);
 
-      const PRIVATE_KEY = ed.utils.randomSecretKey();
+      ws.clientSecretKey = ed.utils.randomSecretKey();
+
+      ws.clientPublicKey = ed.getPublicKey(ws.clientSecretKey);
+
+      const publicKeyString = base58.encode(ws.clientPublicKey);
 
       ws.send({
         method: "Initialize",
-        public_key: base58.encode(ed.getPublicKey(PRIVATE_KEY)),
-        signature: base58.encode(ed.sign(msg, PRIVATE_KEY)),
+        public_key: publicKeyString,
+        signature: base58.encode(ed.sign(msg, ws.clientSecretKey)),
 
         timestamp,
         hostname,
       });
 
-      console.log(await ws.read());
+      const initialized = await ws.read();
+
+      if (initialized.method !== "Initialized") {
+        console.error("Invalid method from server, closing. ", initialized);
+        ws.websocket.close();
+        return;
+      }
+
+      if (initialized.hostname !== hostname) {
+        console.error("Server is trying to be a middle man", initialized);
+        ws.websocket.close();
+        return;
+      }
+
+      const sigMsg = new TextEncoder().encode(
+        `${initialized.timestamp}@${hostname}@${publicKeyString}`,
+      );
+
+      ws.serverPublicKey = base58.decode(initialized.public_key);
+      const signature = base58.decode(initialized.signature);
+
+      if (!ed.verify(signature, sigMsg, ws.serverPublicKey)) {
+        console.error("Invalid signature", initialized);
+        ws.websocket.close();
+        return;
+      }
+
+      console.log("OK");
     })();
   }, []);
 
