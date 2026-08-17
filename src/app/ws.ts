@@ -5,7 +5,19 @@ import { sha512 } from "@noble/hashes/sha2.js";
 
 ed.hashes.sha512 = sha512;
 
-export class EnclaveWebSocket {
+/**
+ * A protocol-aware wrapper around the browser `WebSocket`.
+ *
+ * Owns exactly one connection's lifecycle: the initial key exchange and
+ * identity handshake, and storage of the resulting keys (this client's
+ * keypair, the server's verified public key) for the lifetime of the
+ * connection.
+ *
+ * Exposes typed protocol methods (`ServerMethod` / `ClientMethod`) rather
+ * than raw WebSocket messages. Has no concept of channels, messages, or
+ * app state — `EnclaveServer` builds on top of this to add those.
+ */
+export default class EnclaveWebSocket {
   public websocket: WebSocket;
   public hostname: string;
   onOpenQueue: Array<() => void>;

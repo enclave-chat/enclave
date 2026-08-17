@@ -1,31 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import "./App.css";
-import { EnclaveWebSocket } from "./protocol/ws";
-import * as ed from "@noble/ed25519";
-import { sha512 } from "@noble/hashes/sha2.js";
-
-ed.hashes.sha512 = sha512;
+import Enclave from "./app/app";
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
   const [name, setName] = useState("");
 
-  const initialized = useRef(false);
-
-  useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-
-    (async () => {
-      const ws = new EnclaveWebSocket("localhost:3415");
-      ws.clientSecretKey = ed.utils.randomSecretKey();
-      ws.clientPublicKey = ed.getPublicKey(ws.clientSecretKey);
-      ws.init();
-      console.log("OK");
-    })();
-  }, []);
+  const appRef = useRef<Enclave | null>(null);
+  if (!appRef.current) {
+    appRef.current = new Enclave();
+  }
 
   async function greet() {
     // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
