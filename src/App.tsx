@@ -1,6 +1,6 @@
 import { useReducer, useRef } from "react";
 import Enclave from "@/app/app";
-import ServerList from "./components/view/serverList";
+import ServerList from "./components/view/ServerList";
 import { NewProfilePage } from "./components/view/NewProfileView";
 
 export default function App() {

@@ -18,13 +18,9 @@ export async function getServerList(): Promise<ServerList> {
 }
 
 export function getHTTPUrl(hostname: string, isSecure: boolean, path: string) {
-  return (isSecure ? "https://" : "http://") + getHostname(hostname) + path;
+  return (isSecure ? "https://" : "http://") + hostname + path;
 }
 
 export function getWSUrl(hostname: string, isSecure: boolean) {
-  return (isSecure ? "wss://" : "ws://") + getHostname(hostname);
-}
-
-export function getHostname(hostname: string) {
-  return hostname.includes(":") ? hostname : hostname + ":3415";
+  return (isSecure ? "wss://" : "ws://") + hostname;
 }

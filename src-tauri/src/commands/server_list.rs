@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs};
 use tauri::{AppHandle, Manager};
 
+use crate::protocol::ServerMeta;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct KnownServer {
-    pub name: String,
-    pub description: String,
+    pub meta: ServerMeta,
     pub public_key: String,
     pub is_secure: bool,
 }

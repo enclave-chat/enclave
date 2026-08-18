@@ -48,7 +48,7 @@ export default class Enclave {
       this.server.disconnect();
     }
 
-    this.server = new EnclaveServer(getHostname(hostname), isSecure);
+    this.server = new EnclaveServer(hostname, isSecure);
 
     const clientSecretKey = this.getClientSecretKey();
 

@@ -40,13 +40,13 @@ export default function ServerList({
             return;
           }
 
-          appRef.current
-            .connectToServer(hostname, isSecure)
-            .then(
-              () =>
-                appRef.current?.serverList &&
-                saveServerList(appRef.current?.serverList),
-            );
+          appRef.current.connectToServer(hostname, isSecure).then(() => {
+            if (!appRef.current) return;
+
+            appRef.current.forceRender();
+
+            saveServerList(appRef.current.serverList);
+          });
         }}
       />
     </aside>
