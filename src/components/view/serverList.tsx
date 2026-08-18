@@ -17,7 +17,7 @@ export default function ServerList({
             src={getHTTPUrl(hostname, server.isSecure, "/icon")}
             key={hostname}
             className={
-              server.publicKey === appRef.current?.server?.hostname
+              hostname === appRef.current?.server?.hostname
                 ? "rounded-lg"
                 : "rounded-full"
             }
@@ -43,8 +43,6 @@ export default function ServerList({
 
           appRef.current.connectToServer(hostname, isSecure).then(() => {
             if (!appRef.current) return;
-
-            appRef.current.forceRender();
 
             saveServerList(appRef.current.serverList);
           });

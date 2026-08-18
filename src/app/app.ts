@@ -70,6 +70,8 @@ export default class Enclave {
       isSecure,
       publicKey: base58.encode(this.server.serverPublicKey),
     };
+
+    this.forceRender();
   }
 
   public getClientSecretKey() {
