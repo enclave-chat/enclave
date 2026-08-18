@@ -2,6 +2,12 @@ import { useReducer, useRef } from "react";
 import Enclave from "@/app/app";
 import ServerList from "./components/view/ServerList";
 import { NewProfilePage } from "./components/view/NewProfileView";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "./components/ui/resizable";
+import Sidebar from "./components/view/Sidebar";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);
@@ -21,12 +27,23 @@ export default function App() {
   }
 
   return (
-    <main className="size-screen">
+    <main className="size-screen flex">
       {appRef.current?.accounts &&
       appRef.current.accounts.accounts.length === 0 ? (
         <NewProfilePage appRef={appRef} />
       ) : (
-        <ServerList appRef={appRef} />
+        <>
+          <ServerList appRef={appRef} />
+          <ResizablePanelGroup orientation="horizontal" className="h-screen">
+            <ResizablePanel defaultSize="420px">
+              <Sidebar appRef={appRef} />
+            </ResizablePanel>
+            <ResizableHandle withHandle />
+            <ResizablePanel defaultSize="100%">
+              <div className="h-screen"></div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </>
       )}
     </main>
   );
