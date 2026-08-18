@@ -1,9 +1,4 @@
-import {
-  getHostname,
-  getHTTPUrl,
-  getServerList,
-  ServerList,
-} from "@/lib/serverList";
+import { getHTTPUrl, getServerList, ServerList } from "@/lib/serverList";
 import EnclaveServer from "./server";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";

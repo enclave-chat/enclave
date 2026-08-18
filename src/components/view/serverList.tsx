@@ -15,6 +15,7 @@ export default function ServerList({
         return (
           <img
             src={getHTTPUrl(hostname, server.isSecure, "/icon")}
+            key={hostname}
             className={
               server.publicKey === appRef.current?.server?.hostname
                 ? "rounded-lg"
