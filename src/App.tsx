@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import Enclave from "@/app/app";
 import ServerList from "./components/view/serverList";
+import { NewProfilePage } from "./components/view/NewProfileView";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);
@@ -16,7 +17,12 @@ export default function App() {
 
   return (
     <main className="size-screen">
-      <ServerList appRef={appRef} />
+      {!appRef.current.accounts ||
+      appRef.current.accounts.accounts.length === 0 ? (
+        <NewProfilePage appRef={appRef} />
+      ) : (
+        <ServerList appRef={appRef} />
+      )}
     </main>
   );
 }

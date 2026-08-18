@@ -11,6 +11,7 @@ import { sha512 } from "@noble/hashes/sha2.js";
 import { base58 } from "@scure/base";
 
 import axios from "axios";
+import { AccountsFile, getAccounts } from "@/lib/accounts";
 
 ed.hashes.sha512 = sha512;
 
@@ -30,6 +31,7 @@ ed.hashes.sha512 = sha512;
 export default class Enclave {
   private clientSecretKey: Uint8Array;
   private clientPublicKey: Uint8Array;
+  public accounts?: AccountsFile;
   public server?: EnclaveServer;
   public serverList: ServerList;
 
@@ -41,6 +43,7 @@ export default class Enclave {
 
   public async init() {
     this.serverList = await getServerList();
+    this.accounts = await getAccounts();
   }
 
   public async connectToServer(hostname: string, isSecure: boolean) {
