@@ -61,6 +61,14 @@ export default class Enclave {
       return;
     }
 
+    if (
+      this.serverList[hostname]?.publicKey !==
+      base58.encode(this.server.serverPublicKey)
+    ) {
+      console.error("Server's new public key doesn't match old one");
+      return;
+    }
+
     const metaResponse = await axios.get(
       getHTTPUrl(hostname, isSecure, "/meta"),
     );
