@@ -1,8 +1,8 @@
+import { ServerMeta } from "@/app/protocol";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface KnownServer {
-  name: string;
-  description: string;
+  meta: ServerMeta;
   publicKey: string;
   isSecure: boolean;
 }

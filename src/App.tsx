@@ -15,7 +15,7 @@ export default function App() {
   }
 
   return (
-    <main className="size-screen dark bg-background">
+    <main className="size-screen">
       <ServerList appRef={appRef} />
     </main>
   );

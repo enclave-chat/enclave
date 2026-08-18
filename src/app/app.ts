@@ -1,4 +1,5 @@
 import {
+  getHTTPUrl,
   getServerList,
   getWSUrl,
   KnownServer,
@@ -8,6 +9,8 @@ import EnclaveServer from "./server";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { base58 } from "@scure/base";
+
+import axios from "axios";
 
 ed.hashes.sha512 = sha512;
 
@@ -52,9 +55,12 @@ export default class Enclave {
       return;
     }
 
+    const metaResponse = await axios.get(
+      getHTTPUrl(hostname, isSecure, "/meta"),
+    );
+
     this.serverList[hostname] = {
-      name: "",
-      description: "",
+      meta: metaResponse.data as any,
       isSecure,
       publicKey: base58.encode(this.server.serverPublicKey),
     };

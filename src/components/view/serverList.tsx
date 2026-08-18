@@ -1,6 +1,6 @@
 import Enclave from "@/app/app";
-import EnclaveServer from "@/app/server";
-import { getHTTPUrl, getWSUrl } from "@/lib/serverList";
+import { getHTTPUrl, saveServerList } from "@/lib/serverList";
+import { AddServerDialog } from "../dialog/AddServerDialog";
 
 export default function ServerList({
   appRef,
@@ -10,7 +10,7 @@ export default function ServerList({
   if (!appRef.current) return null;
 
   return (
-    <aside className="bg-card w-16 h-screen p-2 flex flex-col gap-2.5">
+    <aside className="bg-card w-16 h-screen p-2 flex flex-col gap-2.5 border-r border-r-border">
       {Object.entries(appRef.current.serverList).map(([hostname, server]) => {
         return (
           <img
@@ -32,6 +32,23 @@ export default function ServerList({
           />
         );
       })}
+
+      <AddServerDialog
+        onAdd={(hostname, isSecure) => {
+          if (!appRef.current) {
+            console.error("AppRef is not initialized yet");
+            return;
+          }
+
+          appRef.current
+            .connectToServer(hostname, isSecure)
+            .then(
+              () =>
+                appRef.current?.serverList &&
+                saveServerList(appRef.current?.serverList),
+            );
+        }}
+      />
     </aside>
   );
 }
