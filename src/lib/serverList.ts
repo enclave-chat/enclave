@@ -1,12 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 
-type KnownServer = {
+export interface KnownServer {
   name: string;
   description: string;
   publicKey: string;
   hostname: string;
   isWss: boolean;
-};
+}
 
 export async function saveServerList(servers: KnownServer[]): Promise<void> {
   await invoke("save_server_list", { servers });

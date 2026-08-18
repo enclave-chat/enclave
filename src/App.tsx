@@ -5,6 +5,12 @@ export default function App() {
   const appRef = useRef<Enclave | null>(null);
   if (!appRef.current) {
     appRef.current = new Enclave();
+    appRef.current
+      .init()
+      .then(() => {
+        console.log("Encalve initialized");
+      })
+      .catch(console.error);
   }
 
   return (

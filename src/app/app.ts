@@ -1,5 +1,9 @@
+import { getServerList, KnownServer } from "@/lib/serverList";
 import EnclaveServer from "./server";
 import * as ed from "@noble/ed25519";
+import { sha512 } from "@noble/hashes/sha2.js";
+
+ed.hashes.sha512 = sha512;
 
 /**
  * Top-level application state and client-side logic.
@@ -17,14 +21,16 @@ import * as ed from "@noble/ed25519";
 export default class Enclave {
   private clientSecretKey: Uint8Array;
   private clientPublicKey: Uint8Array;
-  public server: EnclaveServer;
+  public server?: EnclaveServer;
+  public serverList: KnownServer[];
 
   public constructor() {
     this.clientSecretKey = ed.utils.randomSecretKey();
     this.clientPublicKey = ed.getPublicKey(this.clientSecretKey);
+    this.serverList = [];
+  }
 
-    this.server = new EnclaveServer("localhost:3415");
-
-    this.server.connect(this.clientPublicKey, this.clientSecretKey);
+  public async init() {
+    this.serverList = await getServerList();
   }
 }
