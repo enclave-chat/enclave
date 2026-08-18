@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
-import reactLogo from "./assets/react.svg";
 import { invoke } from "@tauri-apps/api/core";
 import Enclave from "./app/app";
+import { Button } from "@/components/ui/button";
 
 function App() {
   const [greetMsg, setGreetMsg] = useState("");
@@ -18,8 +18,10 @@ function App() {
   }
 
   return (
-    <main className="bg-black">
-      <div></div>
+    <main>
+      <div>
+        <Button>yo</Button>
+      </div>
     </main>
   );
 }
