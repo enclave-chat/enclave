@@ -12,7 +12,7 @@ pub struct Account {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountsFile {
-    pub active_account: Option<usize>,
+    pub active_account: usize,
     pub accounts: Vec<Account>,
 }
 
@@ -39,7 +39,7 @@ pub fn get_accounts(app: AppHandle) -> Result<AccountsFile, String> {
     let path = accounts_file_path(&app)?;
     if !path.exists() {
         return Ok(AccountsFile {
-            active_account: None,
+            active_account: 0,
             accounts: Vec::new(),
         });
     }

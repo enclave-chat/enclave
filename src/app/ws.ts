@@ -14,7 +14,7 @@ export default class EnclaveWebSocket {
   public constructor(hostname: string) {
     this.onOpenQueue = new Array();
 
-    this.websocket = new WebSocket("ws://" + hostname);
+    this.websocket = new WebSocket(hostname);
     this.websocket.onopen = () => {
       this.onOpenQueue.forEach((fun) => fun());
     };

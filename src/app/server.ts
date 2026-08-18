@@ -2,6 +2,7 @@ import { base58 } from "@scure/base";
 import * as ed from "@noble/ed25519";
 import EnclaveWebSocket from "./ws";
 import { sha512 } from "@noble/hashes/sha2.js";
+import { getWSUrl } from "@/lib/serverList";
 
 ed.hashes.sha512 = sha512;
 
@@ -24,10 +25,12 @@ ed.hashes.sha512 = sha512;
 export default class EnclaveServer {
   public serverPublicKey?: Uint8Array;
   public hostname: string;
+  public isSecure: boolean;
   public websocket?: EnclaveWebSocket;
 
-  public constructor(hostname: string) {
+  public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;
+    this.isSecure = isSecure;
   }
 
   public disconnect() {
@@ -39,7 +42,9 @@ export default class EnclaveServer {
     clientPublicKey: Uint8Array,
     clientSecretKey: Uint8Array,
   ) {
-    this.websocket = new EnclaveWebSocket(this.hostname);
+    this.websocket = new EnclaveWebSocket(
+      getWSUrl(this.hostname, this.isSecure),
+    );
 
     const publicKeyString = base58.encode(clientPublicKey);
 

@@ -6,7 +6,7 @@ export interface Account {
 }
 
 export interface AccountsFile {
-  activeAccount: number | null;
+  activeAccount: number;
   accounts: Account[];
 }
 

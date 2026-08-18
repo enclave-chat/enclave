@@ -1,8 +1,7 @@
 import {
+  getHostname,
   getHTTPUrl,
   getServerList,
-  getWSUrl,
-  KnownServer,
   ServerList,
 } from "@/lib/serverList";
 import EnclaveServer from "./server";
@@ -29,16 +28,14 @@ ed.hashes.sha512 = sha512;
  * reach into `EnclaveServer` or `EnclaveWebSocket` directly.
  */
 export default class Enclave {
-  private clientSecretKey: Uint8Array;
-  private clientPublicKey: Uint8Array;
   public accounts?: AccountsFile;
   public server?: EnclaveServer;
   public serverList: ServerList;
+  public forceRender: () => void;
 
   public constructor() {
-    this.clientSecretKey = ed.utils.randomSecretKey();
-    this.clientPublicKey = ed.getPublicKey(this.clientSecretKey);
     this.serverList = {};
+    this.forceRender = () => {};
   }
 
   public async init() {
@@ -51,7 +48,18 @@ export default class Enclave {
       this.server.disconnect();
     }
 
-    this.server = new EnclaveServer(getWSUrl(hostname, isSecure));
+    this.server = new EnclaveServer(getHostname(hostname), isSecure);
+
+    const clientSecretKey = this.getClientSecretKey();
+
+    if (!clientSecretKey) {
+      console.error("Failed to get client key");
+      return;
+    }
+
+    const clientPublicKey = ed.getPublicKey(clientSecretKey);
+
+    await this.server.connect(clientPublicKey, clientSecretKey);
 
     if (!this.server.serverPublicKey) {
       console.error("Failed to get public key");
@@ -67,5 +75,13 @@ export default class Enclave {
       isSecure,
       publicKey: base58.encode(this.server.serverPublicKey),
     };
+  }
+
+  public getClientSecretKey() {
+    if (!this.accounts) return null;
+
+    const account = this.accounts?.accounts[this.accounts.activeAccount];
+
+    return account ? base58.decode(account.privateKey) : null;
   }
 }
