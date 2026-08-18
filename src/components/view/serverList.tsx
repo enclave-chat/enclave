@@ -7,12 +7,14 @@ export default function ServerList({
 }: {
   appRef: React.RefObject<Enclave | null>;
 }) {
+  if (!appRef.current) return null;
+
   return (
     <aside className="bg-card w-16 h-screen p-2 flex flex-col gap-2.5">
-      {appRef.current?.serverList.map((server) => {
+      {Object.entries(appRef.current.serverList).map(([hostname, server]) => {
         return (
           <img
-            src={getHTTPUrl(server, "/icon")}
+            src={getHTTPUrl(hostname, server.isSecure, "/icon")}
             className={
               server.publicKey === appRef.current?.server?.hostname
                 ? "rounded-lg"
@@ -25,11 +27,7 @@ export default function ServerList({
                 return;
               }
 
-              if (appRef.current.server) {
-                appRef.current.server.disconnect();
-              }
-
-              appRef.current.server = new EnclaveServer(getWSUrl(server));
+              appRef.current.connectToServer(hostname, server.isSecure);
             }}
           />
         );

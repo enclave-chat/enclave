@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{collections::HashMap, fs};
 use tauri::{AppHandle, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -7,9 +7,10 @@ pub struct KnownServer {
     pub name: String,
     pub description: String,
     pub public_key: String,
-    pub hostname: String,
     pub is_secure: bool,
 }
+
+type ServerList = HashMap<String, KnownServer>;
 
 fn servers_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
@@ -24,7 +25,7 @@ fn servers_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn save_server_list(app: AppHandle, servers: Vec<KnownServer>) -> Result<(), String> {
+pub fn save_server_list(app: AppHandle, servers: ServerList) -> Result<(), String> {
     let path = servers_file_path(&app)?;
 
     let json = serde_json::to_string_pretty(&servers)
@@ -36,13 +37,13 @@ pub fn save_server_list(app: AppHandle, servers: Vec<KnownServer>) -> Result<(),
 }
 
 #[tauri::command]
-pub fn get_server_list(app: AppHandle) -> Result<Vec<KnownServer>, String> {
+pub fn get_server_list(app: AppHandle) -> Result<ServerList, String> {
     let path = servers_file_path(&app)?;
 
     if !path.exists() {
         fs::write(&path, "[]").map_err(|e| format!("Failed to write first server list: {e}"))?;
 
-        return Ok(Vec::new());
+        return Ok(ServerList::new());
     }
 
     let json = fs::read_to_string(&path).map_err(|e| format!("Failed to read server list: {e}"))?;
