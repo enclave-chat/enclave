@@ -30,7 +30,7 @@ export default class EnclaveServer {
     this.hostname = hostname;
   }
 
-  public async disconnect() {
+  public disconnect() {
     this.websocket?.websocket.close();
     this.websocket = undefined;
   }

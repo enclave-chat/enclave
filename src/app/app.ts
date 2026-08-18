@@ -1,7 +1,8 @@
-import { getServerList, KnownServer } from "@/lib/serverList";
+import { getServerList, getWSUrl, KnownServer } from "@/lib/serverList";
 import EnclaveServer from "./server";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
+import { base58 } from "@scure/base";
 
 ed.hashes.sha512 = sha512;
 
@@ -32,5 +33,26 @@ export default class Enclave {
 
   public async init() {
     this.serverList = await getServerList();
+  }
+
+  public async addServer(hostname: string, isSecure: boolean) {
+    if (this.server) {
+      this.server.disconnect();
+    }
+
+    this.server = new EnclaveServer(getWSUrl({ hostname, isSecure }));
+
+    if (!this.server.serverPublicKey) {
+      console.error("Failed to get public key");
+      return;
+    }
+
+    this.serverList.push({
+      name: "",
+      description: "",
+      hostname,
+      isSecure,
+      publicKey: base58.encode(this.server.serverPublicKey),
+    });
   }
 }
