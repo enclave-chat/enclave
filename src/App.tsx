@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import Enclave from "./app/app";
+import Enclave from "@/app/app";
 import { Button } from "@/components/ui/button";
 
 function App() {
