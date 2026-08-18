@@ -5,7 +5,7 @@ export interface KnownServer {
   description: string;
   publicKey: string;
   hostname: string;
-  isWss: boolean;
+  isSecure: boolean;
 }
 
 export async function saveServerList(servers: KnownServer[]): Promise<void> {
@@ -14,4 +14,20 @@ export async function saveServerList(servers: KnownServer[]): Promise<void> {
 
 export async function getServerList(): Promise<KnownServer[]> {
   return await invoke("get_server_list");
+}
+
+export function getHTTPUrl(server: KnownServer, path: string) {
+  const hostname = server.hostname.includes(":")
+    ? server.hostname
+    : server.hostname + ":3415";
+
+  return (server.isSecure ? "https://" : "http://") + hostname + path;
+}
+
+export function getWSUrl(server: KnownServer) {
+  const hostname = server.hostname.includes(":")
+    ? server.hostname
+    : server.hostname + ":3415";
+
+  return (server.isSecure ? "wss://" : "ws://") + hostname;
 }

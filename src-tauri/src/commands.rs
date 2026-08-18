@@ -8,7 +8,7 @@ pub struct KnownServer {
     pub description: String,
     pub public_key: String,
     pub hostname: String,
-    pub is_wss: bool,
+    pub is_secure: bool,
 }
 
 fn servers_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
