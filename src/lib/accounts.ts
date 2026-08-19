@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface Account {
   displayName: string;
+  avatar?: string;
   privateKey: string;
 }
 

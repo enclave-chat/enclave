@@ -3,7 +3,7 @@ import { Channel, ChannelKind } from "@/app/protocol";
 import { ChevronDown, ChevronUp, HashIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
 import { Card } from "../ui/card";
-import { Avatar, AvatarImage } from "../ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 import { Button } from "../ui/button";
 
 export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
@@ -60,6 +60,8 @@ export default function Sidebar({
 }: {
   appRef: React.RefObject<Enclave | null>;
 }) {
+  const account = appRef.current?.getAccount();
+
   return (
     <div className="h-screen relative w-full @container">
       {appRef.current?.server?.meta && (
@@ -74,24 +76,27 @@ export default function Sidebar({
         </>
       )}
 
-      <div className="absolute -left-16 right-16 bottom-0 h-20 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden">
-        <Card className="px-3 py-3 h-full w-full flex flex-row">
-          <div className="flex overflow-hidden gap-2.5 items-center">
-            <Avatar className="h-full w-auto aspect-square">
-              <AvatarImage src="https://avatars.githubusercontent.com/u/103524696?v=4" />
-            </Avatar>
-            <div className="flex flex-col">
-              <span>Klesti Selimaj</span>
-              <span className="text-muted-foreground">Online</span>
+      {account && (
+        <div className="absolute -left-16 right-16 bottom-0 h-20 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden">
+          <Card className="px-3 py-3 h-full w-full flex flex-row">
+            <div className="flex gap-2.5 items-center">
+              <Avatar className="h-full w-auto aspect-square">
+                <AvatarImage src={account.avatar} />
+                <AvatarFallback>{account.displayName[0]}</AvatarFallback>
+              </Avatar>
+              <div className="flex flex-col">
+                <span>{account.displayName}</span>
+                <span className="text-muted-foreground">Online</span>
+              </div>
             </div>
-          </div>
-          <div className="ml-auto flex items-center text-muted-foreground">
-            <Button variant="ghost" className="size-10">
-              <Settings2Icon className="size-5.5" />
-            </Button>
-          </div>
-        </Card>
-      </div>
+            <div className="ml-auto flex items-center text-muted-foreground">
+              <Button variant="ghost" className="size-10">
+                <Settings2Icon className="size-5.5" />
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
