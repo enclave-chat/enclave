@@ -1,7 +1,10 @@
 import Enclave from "@/app/app";
 import { Channel, ChannelKind } from "@/app/protocol";
-import { ChevronDown, ChevronUp, HashIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, HashIcon, SettingsIcon } from "lucide-react";
 import { useState } from "react";
+import { Card, CardTitle } from "../ui/card";
+import { Avatar, AvatarImage } from "../ui/avatar";
+import { Button } from "../ui/button";
 
 export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
   switch (kind) {
@@ -44,7 +47,7 @@ export function RenderChannels({ channels }: { channels: Channel[] }) {
     channel.kind === "category" ? (
       <RenderCategory channel={channel} />
     ) : (
-      <div className="w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-foreground/70">
+      <div className="w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground">
         <ChannelIcon kind={channel.kind} />
         {channel.name}
       </div>
@@ -71,7 +74,24 @@ export default function Sidebar({
         </>
       )}
 
-      <div className="absolute -left-16 right-16 bottom-0 h-24 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden" />
+      <div className="absolute -left-16 right-16 bottom-0 h-20 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden">
+        <Card className="px-3 py-3 h-full w-full flex flex-row">
+          <div className="flex overflow-hidden gap-2.5 items-center">
+            <Avatar className="h-full w-auto aspect-square">
+              <AvatarImage src="https://avatars.githubusercontent.com/u/103524696?v=4" />
+            </Avatar>
+            <div className="flex flex-col">
+              <span>Klesti Selimaj</span>
+              <span className="text-muted-foreground">Online</span>
+            </div>
+          </div>
+          <div className="ml-auto flex items-center text-muted-foreground">
+            <Button variant="ghost" className="size-10">
+              <SettingsIcon className="size-5.5" />
+            </Button>
+          </div>
+        </Card>
+      </div>
     </div>
   );
 }
