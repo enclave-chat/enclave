@@ -1,8 +1,8 @@
 import Enclave from "@/app/app";
 import { Channel, ChannelKind } from "@/app/protocol";
-import { ChevronDown, ChevronUp, HashIcon, SettingsIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, HashIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
-import { Card, CardTitle } from "../ui/card";
+import { Card } from "../ui/card";
 import { Avatar, AvatarImage } from "../ui/avatar";
 import { Button } from "../ui/button";
 
@@ -87,7 +87,7 @@ export default function Sidebar({
           </div>
           <div className="ml-auto flex items-center text-muted-foreground">
             <Button variant="ghost" className="size-10">
-              <SettingsIcon className="size-5.5" />
+              <Settings2Icon className="size-5.5" />
             </Button>
           </div>
         </Card>
