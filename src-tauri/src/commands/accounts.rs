@@ -6,6 +6,7 @@ use tauri::{AppHandle, Manager};
 #[serde(rename_all = "camelCase")]
 pub struct Account {
     pub display_name: String,
+    pub avatar: Option<String>,
     pub private_key: String,
 }
 

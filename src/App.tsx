@@ -29,18 +29,26 @@ export default function App() {
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system">
-      <main className="size-screen flex">
+      <main className="size-screen flex select-none cursor-default">
         {appRef.current?.accounts &&
         appRef.current.accounts.accounts.length === 0 ? (
           <NewProfilePage appRef={appRef} />
         ) : (
           <>
-            <ServerList appRef={appRef} />
             <ResizablePanelGroup orientation="horizontal" className="h-screen">
-              <ResizablePanel defaultSize="420px">
-                <Sidebar appRef={appRef} />
+              <ResizablePanel
+                defaultSize="600px"
+                maxSize="400px"
+                minSize="4rem"
+                groupResizeBehavior="preserve-pixel-size"
+              >
+                <div className="flex">
+                  <ServerList appRef={appRef} />
+                  <Sidebar appRef={appRef} />
+                </div>
               </ResizablePanel>
               <ResizableHandle withHandle />
+
               <ResizablePanel defaultSize="100%">
                 <div className="h-screen"></div>
               </ResizablePanel>
