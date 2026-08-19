@@ -1,51 +1,53 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useReducer, useRef } from "react";
+import Enclave from "@/app/app";
+import ServerList from "./components/view/ServerList";
+import { NewProfilePage } from "./components/view/NewProfileView";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "./components/ui/resizable";
+import Sidebar from "./components/view/Sidebar";
+import { ThemeProvider } from "next-themes";
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const appRef = useRef<Enclave | null>(null);
+  const [, forceRender] = useReducer((x) => x + 1, 0);
+  if (!appRef.current) {
+    appRef.current = new Enclave();
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+    appRef.current.forceRender = forceRender;
+
+    appRef.current
+      .init()
+      .then(() => {
+        console.log("Encalve initialized");
+        forceRender();
+      })
+      .catch(console.error);
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+    <ThemeProvider attribute="class" defaultTheme="system">
+      <main className="size-screen flex">
+        {appRef.current?.accounts &&
+        appRef.current.accounts.accounts.length === 0 ? (
+          <NewProfilePage appRef={appRef} />
+        ) : (
+          <>
+            <ServerList appRef={appRef} />
+            <ResizablePanelGroup orientation="horizontal" className="h-screen">
+              <ResizablePanel defaultSize="420px">
+                <Sidebar appRef={appRef} />
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel defaultSize="100%">
+                <div className="h-screen"></div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </>
+        )}
+      </main>
+    </ThemeProvider>
   );
 }
-
-export default App;
