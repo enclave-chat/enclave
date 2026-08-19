@@ -37,10 +37,14 @@ export default function App() {
           <>
             <ServerList appRef={appRef} />
             <ResizablePanelGroup orientation="horizontal" className="h-screen">
-              <ResizablePanel defaultSize="420px">
-                <Sidebar appRef={appRef} />
-              </ResizablePanel>
-              <ResizableHandle withHandle />
+              {appRef.current.server?.meta && (
+                <>
+                  <ResizablePanel defaultSize="500px" maxSize="350px">
+                    <Sidebar appRef={appRef} />
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                </>
+              )}
               <ResizablePanel defaultSize="100%">
                 <div className="h-screen"></div>
               </ResizablePanel>
