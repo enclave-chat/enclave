@@ -41,10 +41,9 @@ pub fn save_server_list(app: AppHandle, servers: ServerList) -> Result<(), Strin
 #[tauri::command]
 pub fn get_server_list(app: AppHandle) -> Result<ServerList, String> {
     let path = servers_file_path(&app)?;
+    println!("{path:?}");
 
     if !path.exists() {
-        fs::write(&path, "[]").map_err(|e| format!("Failed to write first server list: {e}"))?;
-
         return Ok(ServerList::new());
     }
 

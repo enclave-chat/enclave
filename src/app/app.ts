@@ -66,10 +66,14 @@ export default class Enclave {
     }
 
     if (
-      this.serverList[hostname]?.publicKey !==
-      base58.encode(this.server.serverPublicKey)
+      this.serverList[hostname] &&
+      this.serverList[hostname].publicKey !==
+        base58.encode(this.server.serverPublicKey)
     ) {
-      console.error("Server's new public key doesn't match old one");
+      console.error("Server's new public key doesn't match old one", {
+        old: this.serverList[hostname].publicKey,
+        new: base58.encode(this.server.serverPublicKey),
+      });
       return;
     }
 

@@ -43,9 +43,9 @@ export function RenderCategory({ channel }: { channel: Channel }) {
 export function RenderChannels({ channels }: { channels: Channel[] }) {
   return channels.map((channel) =>
     channel.kind === "category" ? (
-      <RenderCategory channel={channel} />
+      <RenderCategory key={channel.id} channel={channel} />
     ) : (
-      <div className="w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground">
+      <div key={channel.id} className="w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground">
         <ChannelIcon kind={channel.kind} />
         {channel.name}
       </div>
