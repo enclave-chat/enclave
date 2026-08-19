@@ -8,6 +8,7 @@ import {
   ResizablePanelGroup,
 } from "./components/ui/resizable";
 import Sidebar from "./components/view/Sidebar";
+import { ThemeProvider } from "next-themes";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);
@@ -27,24 +28,26 @@ export default function App() {
   }
 
   return (
-    <main className="size-screen flex">
-      {appRef.current?.accounts &&
-      appRef.current.accounts.accounts.length === 0 ? (
-        <NewProfilePage appRef={appRef} />
-      ) : (
-        <>
-          <ServerList appRef={appRef} />
-          <ResizablePanelGroup orientation="horizontal" className="h-screen">
-            <ResizablePanel defaultSize="420px">
-              <Sidebar appRef={appRef} />
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel defaultSize="100%">
-              <div className="h-screen"></div>
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        </>
-      )}
-    </main>
+    <ThemeProvider attribute="class" defaultTheme="system">
+      <main className="size-screen flex">
+        {appRef.current?.accounts &&
+        appRef.current.accounts.accounts.length === 0 ? (
+          <NewProfilePage appRef={appRef} />
+        ) : (
+          <>
+            <ServerList appRef={appRef} />
+            <ResizablePanelGroup orientation="horizontal" className="h-screen">
+              <ResizablePanel defaultSize="420px">
+                <Sidebar appRef={appRef} />
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+              <ResizablePanel defaultSize="100%">
+                <div className="h-screen"></div>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </>
+        )}
+      </main>
+    </ThemeProvider>
   );
 }
