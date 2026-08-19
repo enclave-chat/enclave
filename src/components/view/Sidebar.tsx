@@ -58,16 +58,20 @@ export default function Sidebar({
   appRef: React.RefObject<Enclave | null>;
 }) {
   return (
-    appRef.current?.server?.meta && (
-      <div className="h-screen">
-        <header className="px-3 pt-2.5 pb-2.5 text-lg font-semibold border-b border-b-border">
-          <h1>{appRef.current.server.meta.name}</h1>
-        </header>
+    <div className="h-screen relative w-full @container">
+      {appRef.current?.server?.meta && (
+        <>
+          <header className="px-3 pt-2.5 pb-2.5 text-lg font-semibold border-b border-b-border">
+            <h1>{appRef.current.server.meta.name}</h1>
+          </header>
 
-        <section className="px-1.5 pt-3.5 w-full flex flex-col gap-1">
-          <RenderChannels channels={appRef.current.server.meta.channels} />
-        </section>
-      </div>
-    )
+          <section className="px-1.5 pt-3.5 w-full flex flex-col gap-1">
+            <RenderChannels channels={appRef.current.server.meta.channels} />
+          </section>
+        </>
+      )}
+
+      <div className="absolute -left-16 right-16 bottom-0 h-24 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden" />
+    </div>
   );
 }

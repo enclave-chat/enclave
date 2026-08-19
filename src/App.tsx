@@ -35,21 +35,20 @@ export default function App() {
           <NewProfilePage appRef={appRef} />
         ) : (
           <>
-            <ServerList appRef={appRef} />
             <ResizablePanelGroup orientation="horizontal" className="h-screen">
-              {appRef.current.server?.meta && (
-                <>
-                  <ResizablePanel
-                    defaultSize="500px"
-                    maxSize="350px"
-                    className="shrink-0"
-                    groupResizeBehavior="preserve-pixel-size"
-                  >
-                    <Sidebar appRef={appRef} />
-                  </ResizablePanel>
-                  <ResizableHandle withHandle />
-                </>
-              )}
+              <ResizablePanel
+                defaultSize="600px"
+                maxSize="400px"
+                minSize="4rem"
+                groupResizeBehavior="preserve-pixel-size"
+              >
+                <div className="flex">
+                  <ServerList appRef={appRef} />
+                  <Sidebar appRef={appRef} />
+                </div>
+              </ResizablePanel>
+              <ResizableHandle withHandle />
+
               <ResizablePanel defaultSize="100%">
                 <div className="h-screen"></div>
               </ResizablePanel>
