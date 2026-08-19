@@ -10,7 +10,7 @@ export default function ServerList({
   if (!appRef.current) return null;
 
   return (
-    <aside className="bg-card w-16 h-screen p-2 flex flex-col gap-2.5 border-r border-r-border">
+    <aside className="bg-card w-16 h-screen p-2 flex flex-col gap-2.5 border-r border-r-border shrink-0">
       {Object.entries(appRef.current.serverList).map(([hostname, server]) => {
         return (
           <img

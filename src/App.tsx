@@ -39,7 +39,12 @@ export default function App() {
             <ResizablePanelGroup orientation="horizontal" className="h-screen">
               {appRef.current.server?.meta && (
                 <>
-                  <ResizablePanel defaultSize="500px" maxSize="350px">
+                  <ResizablePanel
+                    defaultSize="500px"
+                    maxSize="350px"
+                    className="shrink-0"
+                    groupResizeBehavior="preserve-pixel-size"
+                  >
                     <Sidebar appRef={appRef} />
                   </ResizablePanel>
                   <ResizableHandle withHandle />
