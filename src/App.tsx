@@ -29,7 +29,7 @@ export default function App() {
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system">
-      <main className="size-screen flex">
+      <main className="size-screen flex select-none cursor-default">
         {appRef.current?.accounts &&
         appRef.current.accounts.accounts.length === 0 ? (
           <NewProfilePage appRef={appRef} />
