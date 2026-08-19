@@ -3,6 +3,7 @@ import * as ed from "@noble/ed25519";
 import EnclaveWebSocket from "./ws";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { getWSUrl } from "@/lib/serverList";
+import { ServerMeta } from "./protocol";
 
 ed.hashes.sha512 = sha512;
 
@@ -27,6 +28,7 @@ export default class EnclaveServer {
   public hostname: string;
   public isSecure: boolean;
   public websocket?: EnclaveWebSocket;
+  public meta?: ServerMeta;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;

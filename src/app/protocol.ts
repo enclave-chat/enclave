@@ -3,6 +3,7 @@ export interface ClientMeta {}
 export interface ServerMeta {
   name: string;
   description: string;
+  channels: Channel[];
 }
 
 export type ClientMethod =
@@ -33,3 +34,8 @@ export type ServerMethod =
       method: "Error";
       error: string;
     };
+
+export type Channel = { id: string; name: string } & ChannelKind;
+
+export type ChannelKind =
+  { kind: "text" } | { kind: "category"; channels: Channel[] };

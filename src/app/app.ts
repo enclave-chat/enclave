@@ -73,6 +73,8 @@ export default class Enclave {
       getHTTPUrl(hostname, isSecure, "/meta"),
     );
 
+    this.server.meta = metaResponse.data as any;
+
     this.serverList[hostname] = {
       meta: metaResponse.data as any,
       isSecure,
