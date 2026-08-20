@@ -6,6 +6,17 @@ export interface ServerMeta {
   channels: Channel[];
 }
 
+export interface MessageData {
+  content: string;
+  timestamp: number;
+  signature: string;
+}
+
+export interface StoredMessage extends MessageData {
+  id: string;
+  author: string;
+}
+
 export type ClientMethod =
   | {
       method: "Initialized";
@@ -29,6 +40,11 @@ export type ServerMethod =
     }
   | {
       method: "Meta";
+    }
+  | {
+      method: "SendMessage";
+      channel_id: string;
+      data: MessageData;
     }
   | {
       method: "Error";

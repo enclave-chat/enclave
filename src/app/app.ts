@@ -44,6 +44,31 @@ export default class Enclave<P = Page> {
     return this.accounts?.accounts[this.accounts.activeAccount] || null;
   }
 
+  public sendMessage(content: string, channelId: string) {
+    const clientSecretKey = this.getClientSecretKey();
+
+    if (!clientSecretKey) {
+      console.error("Acccount not found");
+      return;
+    }
+
+    const timestamp = Date.now();
+
+    const signature = new TextEncoder().encode(
+      `${timestamp}@${this.server?.hostname}@${content}`,
+    );
+
+    this.server?.websocket?.send({
+      method: "SendMessage",
+      channel_id: channelId,
+      data: {
+        content,
+        timestamp,
+        signature: base58.encode(ed.sign(signature, clientSecretKey)),
+      },
+    });
+  }
+
   public async connectToServer(hostname: string, isSecure: boolean) {
     if (this.server) {
       this.server.disconnect();

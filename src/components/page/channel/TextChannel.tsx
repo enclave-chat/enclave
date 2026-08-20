@@ -6,5 +6,17 @@ export default function TextChannel({
 }: {
   appRef: React.RefObject<Enclave<ChannelPageProps> | null>;
 }) {
-  return <div>{appRef.current?.page?.channel.name}</div>;
+  const channel = appRef.current?.page?.channel;
+
+  if (!channel) return null;
+
+  return (
+    <div
+      onClick={() => {
+        appRef.current?.sendMessage("Hello, World", channel.id);
+      }}
+    >
+      {channel.name}
+    </div>
+  );
 }
