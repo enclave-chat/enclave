@@ -44,6 +44,14 @@ export default class Enclave<P = Page> {
     return this.accounts?.accounts[this.accounts.activeAccount] || null;
   }
 
+  public getClientSecretKey() {
+    if (!this.accounts) return null;
+
+    const account = this.getAccount();
+
+    return account ? base58.decode(account.privateKey) : null;
+  }
+
   public sendMessage(content: string, channelId: string) {
     const clientSecretKey = this.getClientSecretKey();
 
@@ -104,6 +112,15 @@ export default class Enclave<P = Page> {
       return;
     }
 
+    const account = this.getAccount();
+
+    if (!account) {
+      console.error("Failed to get account");
+      return;
+    }
+
+    this.server.websocket?.send({ method: "Meta", ...account.meta });
+
     const metaResponse = await axios.get(
       getHTTPUrl(hostname, isSecure, "/meta"),
     );
@@ -117,13 +134,5 @@ export default class Enclave<P = Page> {
     };
 
     this.forceRender();
-  }
-
-  public getClientSecretKey() {
-    if (!this.accounts) return null;
-
-    const account = this.getAccount();
-
-    return account ? base58.decode(account.privateKey) : null;
   }
 }

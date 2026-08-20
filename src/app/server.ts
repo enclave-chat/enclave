@@ -3,7 +3,7 @@ import * as ed from "@noble/ed25519";
 import EnclaveWebSocket from "./ws";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { getWSUrl } from "@/lib/serverList";
-import { ServerMeta } from "./protocol";
+import { ServerMeta } from "@/lib/types";
 
 ed.hashes.sha512 = sha512;
 

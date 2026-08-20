@@ -1,5 +1,5 @@
-import { ServerMeta } from "@/app/protocol";
 import { invoke } from "@tauri-apps/api/core";
+import { ServerMeta } from "./types";
 
 export interface KnownServer {
   meta: ServerMeta;

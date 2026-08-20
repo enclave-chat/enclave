@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ClientMeta } from "./types";
 
 export interface Account {
-  displayName: string;
-  avatar?: string;
+  meta: ClientMeta;
   privateKey: string;
 }
 

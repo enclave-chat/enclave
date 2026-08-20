@@ -1,21 +1,4 @@
-export interface ClientMeta {}
-
-export interface ServerMeta {
-  name: string;
-  description: string;
-  channels: Channel[];
-}
-
-export interface MessageData {
-  content: string;
-  timestamp: number;
-  signature: string;
-}
-
-export interface StoredMessage extends MessageData {
-  id: string;
-  author: string;
-}
+import { ClientMeta, MessageData } from "@/lib/types";
 
 export type ClientMethod =
   | {
@@ -38,9 +21,9 @@ export type ServerMethod =
       timestamp: number;
       hostname: string;
     }
-  | {
+  | ({
       method: "Meta";
-    }
+    } & ClientMeta)
   | {
       method: "SendMessage";
       channel_id: string;
@@ -50,8 +33,3 @@ export type ServerMethod =
       method: "Error";
       error: string;
     };
-
-export type Channel = { id: string; name: string } & ChannelKind;
-
-export type ChannelKind =
-  { kind: "text" } | { kind: "category"; channels: Channel[] };
