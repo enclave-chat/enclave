@@ -1,5 +1,5 @@
 import Enclave from "@/app/app";
-import { ChannelPageProps } from "@/lib/page";
+import { ChannelPageProps } from "@/components/page/PageView";
 
 export default function ChannelPage({
   appRef,

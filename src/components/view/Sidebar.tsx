@@ -3,6 +3,7 @@ import { Channel, ChannelKind } from "@/app/protocol";
 import { ChevronDown, ChevronUp, HashIcon } from "lucide-react";
 import { useState } from "react";
 import AccountCard from "./AccountCard";
+import { cn } from "@/lib/utils";
 
 export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
   switch (kind) {
@@ -13,7 +14,13 @@ export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
   }
 }
 
-export function RenderCategory({ channel }: { channel: Channel }) {
+export function RenderCategory({
+  appRef,
+  channel,
+}: {
+  appRef: React.RefObject<Enclave | null>;
+  channel: Channel;
+}) {
   if (channel.kind !== "category") return null;
 
   const [open, setOpen] = useState(true);
@@ -33,19 +40,41 @@ export function RenderCategory({ channel }: { channel: Channel }) {
       </div>
       {open && (
         <div className="pt-0.5 w-full flex flex-col gap-1">
-          <RenderChannels channels={channel.channels} />
+          <RenderChannels appRef={appRef} channels={channel.channels} />
         </div>
       )}
     </div>
   );
 }
 
-export function RenderChannels({ channels }: { channels: Channel[] }) {
+export function RenderChannels({
+  appRef,
+  channels,
+}: {
+  appRef: React.RefObject<Enclave | null>;
+  channels: Channel[];
+}) {
   return channels.map((channel) =>
     channel.kind === "category" ? (
-      <RenderCategory key={channel.id} channel={channel} />
+      <RenderCategory key={channel.id} appRef={appRef} channel={channel} />
     ) : (
-      <div key={channel.id} className="w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground">
+      <div
+        key={channel.id}
+        className={cn(
+          "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
+          channel.id === appRef.current?.page?.channel.id,
+        )}
+        onClick={() => {
+          if (!appRef.current) {
+            console.error("AppRef is not initialized yet");
+            return;
+          }
+
+          appRef.current.page = { kind: "channel", channel };
+
+          appRef.current.forceRender();
+        }}
+      >
         <ChannelIcon kind={channel.kind} />
         {channel.name}
       </div>
@@ -67,7 +96,10 @@ export default function Sidebar({
           </header>
 
           <section className="px-1.5 pt-3.5 w-full flex flex-col gap-1">
-            <RenderChannels channels={appRef.current.server.meta.channels} />
+            <RenderChannels
+              appRef={appRef}
+              channels={appRef.current.server.meta.channels}
+            />
           </section>
         </>
       )}

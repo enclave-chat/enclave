@@ -6,7 +6,7 @@ import { base58 } from "@scure/base";
 
 import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
-import { Page } from "@/lib/page";
+import { Page } from "@/components/page/PageView";
 
 ed.hashes.sha512 = sha512;
 
