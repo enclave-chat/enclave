@@ -69,7 +69,6 @@ export default function TextChannel({
 }
 
 export function TextMessage({
-  appRef,
   message,
 }: {
   appRef: React.RefObject<Enclave<ChannelPageProps> | null>;
