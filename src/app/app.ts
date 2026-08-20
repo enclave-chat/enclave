@@ -6,6 +6,7 @@ import { base58 } from "@scure/base";
 
 import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
+import { Page } from "@/lib/page";
 
 ed.hashes.sha512 = sha512;
 
@@ -22,11 +23,12 @@ ed.hashes.sha512 = sha512;
  * should stay a pure display of what `Enclave` exposes — it should not
  * reach into `EnclaveServer` or `EnclaveWebSocket` directly.
  */
-export default class Enclave {
+export default class Enclave<P = Page> {
   public accounts?: AccountsFile;
   public server?: EnclaveServer;
   public serverList: ServerList;
   public forceRender: () => void;
+  public page?: P;
 
   public constructor() {
     this.serverList = {};

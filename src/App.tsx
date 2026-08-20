@@ -9,6 +9,7 @@ import {
 } from "./components/ui/resizable";
 import Sidebar from "./components/view/Sidebar";
 import { ThemeProvider } from "next-themes";
+import Page from "./components/page/PageView";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);
@@ -50,7 +51,7 @@ export default function App() {
               <ResizableHandle withHandle />
 
               <ResizablePanel defaultSize="100%">
-                <div className="h-screen"></div>
+                <Page appRef={appRef} />
               </ResizablePanel>
             </ResizablePanelGroup>
           </>
