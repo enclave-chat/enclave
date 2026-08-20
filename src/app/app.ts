@@ -6,6 +6,8 @@ import { base58 } from "@scure/base";
 
 import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
+import { Page } from "@/components/page/PageView";
+import { ClientMethod } from "./protocol";
 
 ed.hashes.sha512 = sha512;
 
@@ -22,11 +24,12 @@ ed.hashes.sha512 = sha512;
  * should stay a pure display of what `Enclave` exposes — it should not
  * reach into `EnclaveServer` or `EnclaveWebSocket` directly.
  */
-export default class Enclave {
+export default class Enclave<P = Page> {
   public accounts?: AccountsFile;
   public server?: EnclaveServer;
   public serverList: ServerList;
   public forceRender: () => void;
+  public page?: P;
 
   public constructor() {
     this.serverList = {};
@@ -40,6 +43,44 @@ export default class Enclave {
 
   public getAccount(): Account | null {
     return this.accounts?.accounts[this.accounts.activeAccount] || null;
+  }
+
+  public getClientSecretKey() {
+    if (!this.accounts) return null;
+
+    const account = this.getAccount();
+
+    return account ? base58.decode(account.privateKey) : null;
+  }
+
+  public sendMessage(content: string, channelId: string) {
+    const clientSecretKey = this.getClientSecretKey();
+
+    if (!clientSecretKey) {
+      console.error("Acccount not found");
+      return;
+    }
+
+    const timestamp = Date.now();
+
+    if (!this.server?.serverPublicKey) {
+      console.error("Server pubkey not initialized");
+      return;
+    }
+
+    const signature = new TextEncoder().encode(
+      `${timestamp}@${base58.encode(this.server?.serverPublicKey)}@${content}`,
+    );
+
+    this.server?.websocket?.send({
+      method: "SendMessage",
+      channel_id: channelId,
+      data: {
+        content,
+        timestamp,
+        signature: base58.encode(ed.sign(signature, clientSecretKey)),
+      },
+    });
   }
 
   public async connectToServer(hostname: string, isSecure: boolean) {
@@ -77,6 +118,20 @@ export default class Enclave {
       return;
     }
 
+    const account = this.getAccount();
+
+    if (!account) {
+      console.error("Failed to get account");
+      return;
+    }
+
+    if (this.server.websocket) {
+      this.server.websocket.send({ method: "Meta", ...account.meta });
+      this.server.websocket.websocket.onmessage = (msg) => {
+        this.onMessage(JSON.parse(msg.data));
+      };
+    }
+
     const metaResponse = await axios.get(
       getHTTPUrl(hostname, isSecure, "/meta"),
     );
@@ -92,11 +147,37 @@ export default class Enclave {
     this.forceRender();
   }
 
-  public getClientSecretKey() {
-    if (!this.accounts) return null;
+  public async onMessage(msg: ClientMethod) {
+    const server = this.server;
 
-    const account = this.getAccount();
+    if (!server) {
+      console.error("Unable to get server for message, MSG:", msg);
+      return;
+    }
 
-    return account ? base58.decode(account.privateKey) : null;
+    switch (msg.method) {
+      case "Initialized":
+        console.error("Already initialized");
+        return;
+
+      case "Error":
+        console.error("Server error:", msg.error);
+        return;
+
+      case "Messages":
+        Object.entries(msg.messages).forEach(([channelId, messages]) => {
+          if (!server.messages[channelId]) {
+            server.messages[channelId] = {};
+          }
+
+          messages.forEach((message) => {
+            server.messages[channelId][message.id] = message;
+          });
+        });
+
+        this.forceRender();
+
+        return;
+    }
   }
 }

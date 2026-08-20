@@ -68,16 +68,16 @@ export function NewProfilePage({
 
       const { secretKey } = ed.keygen();
 
-      const newAccount = {
-        displayName: name,
-        privateKey: base58.encode(secretKey),
-        avatar: avatar ?? undefined,
-      };
-
       appRef.current.accounts.activeAccount =
         appRef.current.accounts.accounts.length;
 
-      appRef.current.accounts.accounts.push(newAccount);
+      appRef.current.accounts.accounts.push({
+        meta: {
+          displayName: name,
+          avatar: avatar ?? undefined,
+        },
+        privateKey: base58.encode(secretKey),
+      });
 
       saveAccounts(appRef.current.accounts);
     } catch (e) {

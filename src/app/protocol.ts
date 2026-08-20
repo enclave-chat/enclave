@@ -1,10 +1,4 @@
-export interface ClientMeta {}
-
-export interface ServerMeta {
-  name: string;
-  description: string;
-  channels: Channel[];
-}
+import { ClientMeta, MessageData, StoredMessage } from "@/lib/types";
 
 export type ClientMethod =
   | {
@@ -17,6 +11,10 @@ export type ClientMethod =
   | {
       method: "Error";
       error: string;
+    }
+  | {
+      method: "Messages";
+      messages: Record<string, StoredMessage[]>;
     };
 
 export type ServerMethod =
@@ -28,14 +26,19 @@ export type ServerMethod =
       hostname: string;
     }
   | {
-      method: "Meta";
-    }
-  | {
       method: "Error";
       error: string;
+    }
+  | ({
+      method: "Meta";
+    } & ClientMeta)
+  | {
+      method: "SendMessage";
+      channel_id: string;
+      data: MessageData;
+    }
+  | {
+      method: "GetMessages";
+      channel_id: string;
+      chunk: number;
     };
-
-export type Channel = { id: string; name: string } & ChannelKind;
-
-export type ChannelKind =
-  { kind: "text" } | { kind: "category"; channels: Channel[] };
