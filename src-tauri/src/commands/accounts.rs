@@ -2,11 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::{AppHandle, Manager};
 
+use crate::protocol::ClientMeta;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {
-    pub display_name: String,
-    pub avatar: Option<String>,
+    pub meta: ClientMeta,
     pub private_key: String,
 }
 

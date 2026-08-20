@@ -20,8 +20,8 @@ export default function AccountCard({
       <Card className="px-3 py-3 h-full w-full flex flex-row">
         <div className="flex gap-2.5 items-center w-full">
           <Avatar className="h-full w-auto aspect-square">
-            <AvatarImage src={account.avatar} />
-            <AvatarFallback>{account.displayName[0]}</AvatarFallback>
+            <AvatarImage src={account.meta.avatar} />
+            <AvatarFallback>{account.meta.displayName[0]}</AvatarFallback>
           </Avatar>
           <div className="flex flex-col w-full">
             <span
@@ -34,7 +34,7 @@ export default function AccountCard({
                 );
               }}
             >
-              <p>{account.displayName}</p>
+              <p>{account.meta.displayName}</p>
               <CopyIcon className="text-muted-foreground size-3" />
             </span>
             <span className="text-muted-foreground">Online</span>

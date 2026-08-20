@@ -1,6 +1,6 @@
 import Enclave from "@/app/app";
 import ChannelPage from "./channel/ChannelPage";
-import { Channel } from "@/app/protocol";
+import { Channel } from "@/lib/types";
 
 export type ChannelPageProps = {
   kind: "channel";

@@ -1,5 +1,5 @@
 import Enclave from "@/app/app";
-import { Channel, ChannelKind } from "@/app/protocol";
+import { Channel, ChannelKind } from "@/lib/types";
 import { ChevronDown, ChevronUp, HashIcon } from "lucide-react";
 import { useState } from "react";
 import AccountCard from "./AccountCard";

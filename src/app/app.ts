@@ -62,8 +62,13 @@ export default class Enclave<P = Page> {
 
     const timestamp = Date.now();
 
+    if (!this.server?.serverPublicKey) {
+      console.error("Server pubkey not initialized");
+      return;
+    }
+
     const signature = new TextEncoder().encode(
-      `${timestamp}@${this.server?.hostname}@${content}`,
+      `${timestamp}@${base58.encode(this.server?.serverPublicKey)}@${content}`,
     );
 
     this.server?.websocket?.send({
