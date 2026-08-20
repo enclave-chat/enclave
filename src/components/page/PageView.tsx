@@ -14,11 +14,10 @@ export default function Page({
 }: {
   appRef: React.RefObject<Enclave | null>;
 }) {
+  if (!appRef.current?.page?.kind) return null;
+
   switch (appRef.current?.page?.kind) {
     case "channel":
       return <ChannelPage appRef={appRef} />;
-
-    default:
-      return null;
   }
 }
