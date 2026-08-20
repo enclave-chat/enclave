@@ -1,5 +1,6 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "@/components/page/PageView";
+import { useEffect } from "react";
 
 export default function TextChannel({
   appRef,
@@ -10,13 +11,17 @@ export default function TextChannel({
 
   if (!channel) return null;
 
+  useEffect(() => {
+    appRef.current?.server?.websocket?.send({
+      method: "GetMessages",
+      channel_id: channel.id,
+      chunk: 0,
+    });
+
+    appRef.current?.forceRender();
+  }, []);
+
   return (
-    <div
-      onClick={() => {
-        appRef.current?.sendMessage("Hello, World", channel.id);
-      }}
-    >
-      {channel.name}
-    </div>
+    <div>{JSON.stringify(appRef.current?.server?.messages[channel.id])}</div>
   );
 }

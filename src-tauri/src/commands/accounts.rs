@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::{AppHandle, Manager};
 
-use crate::protocol::ClientMeta;
+use crate::types::ClientMeta;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

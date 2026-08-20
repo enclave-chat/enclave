@@ -1,4 +1,4 @@
-import { ClientMeta, MessageData } from "@/lib/types";
+import { ClientMeta, MessageData, StoredMessage } from "@/lib/types";
 
 export type ClientMethod =
   | {
@@ -11,6 +11,10 @@ export type ClientMethod =
   | {
       method: "Error";
       error: string;
+    }
+  | {
+      method: "Messages";
+      messages: Record<string, StoredMessage[]>;
     };
 
 export type ServerMethod =
@@ -21,6 +25,10 @@ export type ServerMethod =
       timestamp: number;
       hostname: string;
     }
+  | {
+      method: "Error";
+      error: string;
+    }
   | ({
       method: "Meta";
     } & ClientMeta)
@@ -30,6 +38,7 @@ export type ServerMethod =
       data: MessageData;
     }
   | {
-      method: "Error";
-      error: string;
+      method: "GetMessages";
+      channel_id: string;
+      chunk: number;
     };

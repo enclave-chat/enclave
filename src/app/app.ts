@@ -7,6 +7,7 @@ import { base58 } from "@scure/base";
 import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
 import { Page } from "@/components/page/PageView";
+import { ClientMethod } from "./protocol";
 
 ed.hashes.sha512 = sha512;
 
@@ -124,7 +125,12 @@ export default class Enclave<P = Page> {
       return;
     }
 
-    this.server.websocket?.send({ method: "Meta", ...account.meta });
+    if (this.server.websocket) {
+      this.server.websocket.send({ method: "Meta", ...account.meta });
+      this.server.websocket.websocket.onmessage = (msg) => {
+        this.onMessage(JSON.parse(msg.data));
+      };
+    }
 
     const metaResponse = await axios.get(
       getHTTPUrl(hostname, isSecure, "/meta"),
@@ -139,5 +145,38 @@ export default class Enclave<P = Page> {
     };
 
     this.forceRender();
+  }
+
+  public async onMessage(msg: ClientMethod) {
+    const server = this.server;
+
+    if (!server) {
+      console.error("Unable to get server for message, MSG:", msg);
+      return;
+    }
+
+    switch (msg.method) {
+      case "Initialized":
+        console.error("Already initialized");
+        return;
+
+      case "Error":
+        console.error("Server error:", msg.error);
+        return;
+
+      case "Messages":
+        console.log("msg", msg.messages);
+        Object.entries(msg.messages).forEach(([channelId, messages]) => {
+          if (!server.messages[channelId]) {
+            server.messages[channelId] = [];
+          }
+
+          messages.forEach((message) => {
+            server.messages[channelId].push(message);
+          });
+        });
+
+        return;
+    }
   }
 }
