@@ -1,5 +1,6 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "@/components/page/PageView";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StoredMessage } from "@/lib/types";
@@ -40,8 +41,10 @@ export default function TextChannel({
 
       <div className="h-full flex flex-col gap-2.5 px-3 pt-4 overflow-y-scroll">
         {appRef.current?.server?.messages[channel.id] &&
-          Array.from(appRef.current?.server?.messages[channel.id]).map(
-            (message) => <TextMessage appRef={appRef} message={message} />,
+          Object.entries(appRef.current?.server?.messages[channel.id]).map(
+            ([_, message]) => (
+              <TextMessage key={message.id} appRef={appRef} message={message} />
+            ),
           )}
       </div>
 
@@ -79,9 +82,11 @@ export function TextMessage({
 
   return (
     <div className="rounded-lg flex gap-3 px-3 py-3 hover:bg-muted/40">
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium text-muted-foreground">
-        {message.author.slice(0, 2).toUpperCase()}
-      </div>
+      <Avatar className="h-10 w-10">
+        <AvatarFallback>
+          {message.author.slice(0, 2).toUpperCase()}
+        </AvatarFallback>
+      </Avatar>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">

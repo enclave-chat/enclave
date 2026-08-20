@@ -165,16 +165,17 @@ export default class Enclave<P = Page> {
         return;
 
       case "Messages":
-        console.log("msg", msg.messages);
         Object.entries(msg.messages).forEach(([channelId, messages]) => {
           if (!server.messages[channelId]) {
-            server.messages[channelId] = new Set();
+            server.messages[channelId] = {};
           }
 
           messages.forEach((message) => {
-            server.messages[channelId].add(message);
+            server.messages[channelId][message.id] = message;
           });
         });
+
+        this.forceRender();
 
         return;
     }

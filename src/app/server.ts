@@ -29,7 +29,7 @@ export default class EnclaveServer {
   public isSecure: boolean;
   public websocket?: EnclaveWebSocket;
   public meta?: ServerMeta;
-  public messages: Record<string, Set<StoredMessage>>;
+  public messages: Record<string, Record<string, StoredMessage>>;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;
