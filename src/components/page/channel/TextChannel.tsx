@@ -1,10 +1,12 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "@/components/page/PageView";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { StoredMessage } from "@/lib/types";
+import { ClientMeta, StoredMessage } from "@/lib/types";
+import { base58 } from "@scure/base";
 import { useEffect, useRef, useState } from "react";
+import * as ed from "@noble/ed25519";
 
 export default function TextChannel({
   appRef,
@@ -90,6 +92,7 @@ export default function TextChannel({
 }
 
 export function TextMessage({
+  appRef,
   message,
 }: {
   appRef: React.RefObject<Enclave<ChannelPageProps> | null>;
@@ -100,18 +103,37 @@ export function TextMessage({
     minute: "2-digit",
   });
 
+  const [author, setAuthor] = useState<ClientMeta | null>(null);
+
+  useEffect(() => {
+    const currentAccount = appRef.current?.getAccount();
+
+    if (currentAccount) {
+      const pubKey = base58.encode(
+        ed.getPublicKey(base58.decode(currentAccount.privateKey)),
+      );
+
+      if (pubKey === message.author) {
+        setAuthor(currentAccount.meta);
+      }
+    }
+  }, []);
+
   return (
     <div className="rounded-lg flex gap-3 px-3 py-3 hover:bg-muted/40">
       <Avatar className="h-10 w-10">
+        <AvatarImage src={author?.avatar} />
+
         <AvatarFallback>
-          {message.author.slice(0, 2).toUpperCase()}
+          {author?.displayName.slice(0, 1).toUpperCase() ||
+            message.author.slice(0, 2).toUpperCase()}
         </AvatarFallback>
       </Avatar>
 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-medium">
-            {message.author.slice(0, 8)}
+            {author?.displayName || message.author.slice(0, 8)}
           </span>
           <span className="text-xs text-muted-foreground">{time}</span>
         </div>
