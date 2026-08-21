@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { StoredMessage } from "@/lib/types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export default function TextChannel({
   appRef,
@@ -14,17 +14,37 @@ export default function TextChannel({
   const [currentMessage, setCurrentMessage] = useState("");
   const channel = appRef.current?.page?.channel;
 
+  const intersectionRef = useRef<HTMLDivElement | null>(null);
+  const chunkRef = useRef(0);
+
   useEffect(() => {
-    if (!channel) return;
+    if (!intersectionRef.current) return;
 
-    appRef.current?.server?.websocket?.send({
-      method: "GetMessages",
-      channel_id: channel.id,
-      chunk: 0,
-    });
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          console.log("Element is in view!");
+          if (!channel) return;
 
-    appRef.current?.forceRender();
-  }, [channel]);
+          appRef.current?.server?.websocket?.send({
+            method: "GetMessages",
+            channel_id: channel.id,
+            chunk: chunkRef.current,
+          });
+
+          appRef.current?.forceRender();
+          chunkRef.current += 1;
+        }
+      },
+      {
+        threshold: 0.5,
+      },
+    );
+
+    observer.observe(intersectionRef.current);
+
+    return () => observer.disconnect();
+  }, []);
 
   if (!channel) return null;
 
@@ -34,12 +54,13 @@ export default function TextChannel({
   };
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-screen">
       <header className="px-3 pt-3 pb-3 text-sm text-muted-foreground border-b border-b-border">
         <h2>{channel.name}</h2>
       </header>
 
       <div className="h-full flex flex-col gap-2.5 px-3 pt-4 overflow-y-scroll">
+        <div ref={intersectionRef} />
         {appRef.current?.server?.messages[channel.id] &&
           Object.entries(appRef.current?.server?.messages[channel.id]).map(
             ([_, message]) => (
