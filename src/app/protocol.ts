@@ -19,6 +19,16 @@ export type ClientMethod =
   | {
       method: "Users";
       users: Record<string, ClientMeta>;
+    }
+  | {
+      method: "MessageEdited";
+      channel_id: string;
+      message: StoredMessage;
+    }
+  | {
+      method: "MessageDeleted";
+      channel_id: string;
+      message_id: string;
     };
 
 export type ServerMethod =
@@ -49,4 +59,16 @@ export type ServerMethod =
   | {
       method: "GetUsers";
       pubkeys: string[];
+    }
+  | {
+      method: "EditMessage";
+      message_id: string;
+      channel_id: string;
+      content: string;
+      signature: string;
+    }
+  | {
+      method: "DeleteMessage";
+      channel_id: string;
+      message_id: string;
     };

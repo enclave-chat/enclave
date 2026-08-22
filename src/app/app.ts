@@ -194,6 +194,16 @@ export default class Enclave<P = Page> {
         this.forceRender();
 
         return;
+
+      case "MessageDeleted":
+        delete server.messages[msg.channel_id][msg.message_id];
+        this.forceRender();
+        return;
+
+      case "MessageEdited":
+        server.messages[msg.channel_id][msg.message.id] = msg.message;
+        this.forceRender();
+        return;
     }
   }
 }
