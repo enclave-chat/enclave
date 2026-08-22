@@ -106,7 +106,7 @@ export function TextMessage({
     minute: "2-digit",
   });
 
-  const [author, setAuthor] = useState<ClientMeta | null>(null);
+  const author = appRef.current?.server?.users[message.author];
 
   const [verified, setVerified] = useState(true);
 
@@ -128,17 +128,6 @@ export function TextMessage({
         authorPubKey,
       ),
     );
-
-    const currentAccount = appRef.current?.getAccount();
-    if (currentAccount) {
-      const accountPubKey = ed.getPublicKey(
-        base58.decode(currentAccount.privateKey),
-      );
-
-      if (base58.encode(accountPubKey) === message.author) {
-        setAuthor(currentAccount.meta);
-      }
-    }
   }, []);
 
   return (
