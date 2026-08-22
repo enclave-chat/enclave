@@ -50,6 +50,8 @@ export default function TextChannel({
 
   if (!channel) return null;
 
+  const messages = appRef.current?.server?.messages[channel.id];
+
   const sendMessage = () => {
     appRef.current?.sendMessage(currentMessage, channel.id);
     setCurrentMessage("");
@@ -61,14 +63,14 @@ export default function TextChannel({
         <h2>{channel.name}</h2>
       </header>
 
-      <div className="h-full flex flex-col gap-2.5 px-3 pt-4 overflow-y-scroll">
+      <div className="h-full flex flex-col-reverse gap-2.5 px-3 pt-4 overflow-y-scroll">
         <div ref={intersectionRef} />
-        {appRef.current?.server?.messages[channel.id] &&
-          Object.entries(appRef.current?.server?.messages[channel.id]).map(
-            ([_, message]) => (
+        {messages &&
+          Object.entries(messages)
+            .sort((a, b) => b[1].timestamp - a[1].timestamp)
+            .map(([_, message]) => (
               <TextMessage key={message.id} appRef={appRef} message={message} />
-            ),
-          )}
+            ))}
       </div>
 
       <div className="pb-6 px-4 flex flex-row gap-3">
