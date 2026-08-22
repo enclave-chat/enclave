@@ -7,6 +7,7 @@ import { ClientMeta, StoredMessage } from "@/lib/types";
 import { base58 } from "@scure/base";
 import { useEffect, useRef, useState } from "react";
 import * as ed from "@noble/ed25519";
+import { CircleXIcon } from "lucide-react";
 
 export default function TextChannel({
   appRef,
@@ -64,13 +65,13 @@ export default function TextChannel({
       </header>
 
       <div className="h-full flex flex-col-reverse gap-2.5 px-3 pt-4 overflow-y-scroll">
-        <div ref={intersectionRef} />
         {messages &&
           Object.entries(messages)
             .sort((a, b) => b[1].timestamp - a[1].timestamp)
             .map(([_, message]) => (
               <TextMessage key={message.id} appRef={appRef} message={message} />
             ))}
+        <div ref={intersectionRef} />
       </div>
 
       <div className="pb-6 px-4 flex flex-row gap-3">
@@ -107,15 +108,32 @@ export function TextMessage({
 
   const [author, setAuthor] = useState<ClientMeta | null>(null);
 
+  const [verified, setVerified] = useState(true);
+
   useEffect(() => {
+    const serverPubKey =
+      appRef.current?.server?.serverPublicKey &&
+      base58.encode(appRef.current?.server?.serverPublicKey);
+
+    if (!serverPubKey) return;
+
+    const authorPubKey = base58.decode(message.author);
+
+    setVerified(
+      ed.verify(
+        base58.decode(message.signature),
+        new TextEncoder().encode(
+          `${message.timestamp}@${serverPubKey}@${message.content}`,
+        ),
+        authorPubKey,
+      ),
+    );
+
     const currentAccount = appRef.current?.getAccount();
-
     if (currentAccount) {
-      const pubKey = base58.encode(
-        ed.getPublicKey(base58.decode(currentAccount.privateKey)),
-      );
+      const pubKey = ed.getPublicKey(base58.decode(currentAccount.privateKey));
 
-      if (pubKey === message.author) {
+      if (pubKey === authorPubKey) {
         setAuthor(currentAccount.meta);
       }
     }
@@ -134,7 +152,10 @@ export function TextMessage({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium">
+          <span className="text-sm font-medium flex items-center gap-1">
+            {!verified && (
+              <CircleXIcon className="h-3.5 w-3.5 text-destructive" />
+            )}
             {author?.displayName || message.author.slice(0, 8)}
           </span>
           <span className="text-xs text-muted-foreground">{time}</span>
