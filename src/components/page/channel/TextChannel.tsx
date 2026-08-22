@@ -131,9 +131,11 @@ export function TextMessage({
 
     const currentAccount = appRef.current?.getAccount();
     if (currentAccount) {
-      const pubKey = ed.getPublicKey(base58.decode(currentAccount.privateKey));
+      const accountPubKey = ed.getPublicKey(
+        base58.decode(currentAccount.privateKey),
+      );
 
-      if (pubKey === authorPubKey) {
+      if (base58.encode(accountPubKey) === message.author) {
         setAuthor(currentAccount.meta);
       }
     }
