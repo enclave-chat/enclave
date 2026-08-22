@@ -77,7 +77,7 @@ export default function TextChannel({
         <h2>{channel.name}</h2>
       </header>
 
-      <div className="h-full flex flex-col-reverse gap-2.5 px-3 pt-4 overflow-y-scroll">
+      <div className="h-full flex flex-col-reverse gap-2.5 px-3 pt-4 overflow-y-scroll scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {messages &&
           Object.entries(messages)
             .sort((a, b) => b[1].timestamp - a[1].timestamp)
