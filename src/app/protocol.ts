@@ -15,6 +15,10 @@ export type ClientMethod =
   | {
       method: "Messages";
       messages: Record<string, StoredMessage[]>;
+    }
+  | {
+      method: "Users";
+      users: Record<string, ClientMeta>;
     };
 
 export type ServerMethod =
@@ -41,4 +45,8 @@ export type ServerMethod =
       method: "GetMessages";
       channel_id: string;
       chunk: number;
+    }
+  | {
+      method: "GetUsers";
+      pubkeys: string[];
     };
