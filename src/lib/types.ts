@@ -18,6 +18,7 @@ export interface MessageData {
 export interface StoredMessage extends MessageData {
   id: string;
   author: string;
+  is_edited: boolean;
 }
 
 export type Channel = { id: string; name: string } & ChannelKind;

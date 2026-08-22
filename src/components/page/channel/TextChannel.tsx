@@ -3,11 +3,17 @@ import { ChannelPageProps } from "@/components/page/PageView";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ClientMeta, StoredMessage } from "@/lib/types";
+import { Channel, StoredMessage } from "@/lib/types";
 import { base58 } from "@scure/base";
 import { useEffect, useRef, useState } from "react";
 import * as ed from "@noble/ed25519";
-import { CircleXIcon } from "lucide-react";
+import { CircleXIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 
 export default function TextChannel({
   appRef,
@@ -19,6 +25,13 @@ export default function TextChannel({
 
   const intersectionRef = useRef<HTMLDivElement | null>(null);
   const chunkRef = useRef(0);
+
+  const account = appRef.current?.getAccount();
+
+  const userPubKey =
+    (account &&
+      base58.encode(ed.getPublicKey(base58.decode(account.privateKey)))) ||
+    null;
 
   useEffect(() => {
     if (!intersectionRef.current) return;
@@ -69,7 +82,13 @@ export default function TextChannel({
           Object.entries(messages)
             .sort((a, b) => b[1].timestamp - a[1].timestamp)
             .map(([_, message]) => (
-              <TextMessage key={message.id} appRef={appRef} message={message} />
+              <TextMessage
+                key={message.id}
+                appRef={appRef}
+                message={message}
+                channel={channel}
+                userPubKey={userPubKey}
+              />
             ))}
         <div ref={intersectionRef} />
       </div>
@@ -97,28 +116,28 @@ export default function TextChannel({
 export function TextMessage({
   appRef,
   message,
+
+  channel,
+  userPubKey,
 }: {
   appRef: React.RefObject<Enclave<ChannelPageProps> | null>;
   message: StoredMessage;
+  channel: Channel;
+  userPubKey: string | null;
 }) {
   const time = new Date(message.timestamp).toLocaleTimeString([], {
     hour: "numeric",
     minute: "2-digit",
   });
-
   const author = appRef.current?.server?.users[message.author];
-
   const [verified, setVerified] = useState(true);
 
   useEffect(() => {
     const serverPubKey =
       appRef.current?.server?.serverPublicKey &&
       base58.encode(appRef.current?.server?.serverPublicKey);
-
     if (!serverPubKey) return;
-
     const authorPubKey = base58.decode(message.author);
-
     setVerified(
       ed.verify(
         base58.decode(message.signature),
@@ -130,17 +149,25 @@ export function TextMessage({
     );
   }, []);
 
-  return (
+  const isOwnMessage = message.author === userPubKey;
+
+  function handleDelete() {
+    appRef.current?.server?.websocket?.send({
+      method: "DeleteMessage",
+      message_id: message.id,
+      channel_id: channel.id,
+    });
+  }
+
+  const content = (
     <div className="rounded-lg flex gap-3 px-3 py-3 hover:bg-muted/40">
       <Avatar className="h-10 w-10">
         <AvatarImage src={author?.avatar} />
-
         <AvatarFallback>
           {author?.displayName.slice(0, 1).toUpperCase() ||
             message.author.slice(0, 2).toUpperCase()}
         </AvatarFallback>
       </Avatar>
-
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium flex items-center gap-1">
@@ -150,11 +177,34 @@ export function TextMessage({
             {author?.displayName || message.author.slice(0, 8)}
           </span>
           <span className="text-xs text-muted-foreground">{time}</span>
+          {message.is_edited && (
+            <span className="text-xs text-muted-foreground">(edited)</span>
+          )}
         </div>
         <p className="whitespace-pre-wrap break-words text-sm leading-snug">
           {message.content}
         </p>
       </div>
     </div>
+  );
+
+  if (!isOwnMessage) {
+    return content;
+  }
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger>{content}</ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={() => {}}>
+          <PencilIcon className="mr-2 h-4 w-4" />
+          Edit
+        </ContextMenuItem>
+        <ContextMenuItem onClick={handleDelete} variant="destructive">
+          <Trash2Icon className="mr-2 h-4 w-4" />
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
