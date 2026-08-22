@@ -165,18 +165,44 @@ export default class Enclave<P = Page> {
         return;
 
       case "Messages":
-        Object.entries(msg.messages).forEach(([channelId, messages]) => {
-          if (!server.messages[channelId]) {
-            server.messages[channelId] = {};
-          }
+        const authors = Object.entries(msg.messages).flatMap(
+          ([channelId, messages]) => {
+            if (!server.messages[channelId]) {
+              server.messages[channelId] = {};
+            }
 
-          messages.forEach((message) => {
-            server.messages[channelId][message.id] = message;
-          });
+            return messages.map((message) => {
+              server.messages[channelId][message.id] = message;
+              return message.author;
+            });
+          },
+        );
+
+        const dedupedAuthors = Array.from(new Set(authors));
+
+        this.server?.getUsers(dedupedAuthors);
+
+        this.forceRender();
+
+        return;
+
+      case "Users":
+        Object.entries(msg.users).forEach(([pubKey, user]) => {
+          server.users[pubKey] = user;
         });
 
         this.forceRender();
 
+        return;
+
+      case "MessageDeleted":
+        delete server.messages[msg.channel_id][msg.message_id];
+        this.forceRender();
+        return;
+
+      case "MessageEdited":
+        server.messages[msg.channel_id][msg.message.id] = msg.message;
+        this.forceRender();
         return;
     }
   }

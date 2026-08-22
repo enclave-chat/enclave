@@ -1,6 +1,7 @@
 import Enclave from "@/app/app";
 import { getHTTPUrl, saveServerList } from "@/lib/serverList";
 import { AddServerDialog } from "../dialog/AddServerDialog";
+import { cn } from "@/lib/utils";
 
 export default function ServerList({
   appRef,
@@ -16,11 +17,11 @@ export default function ServerList({
           <img
             src={getHTTPUrl(hostname, server.isSecure, "/icon")}
             key={hostname}
-            className={
-              hostname === appRef.current?.server?.hostname
-                ? "rounded-lg"
-                : "rounded-full"
-            }
+            className={cn(
+              "rounded-lg",
+              hostname === appRef.current?.server?.hostname &&
+                "border-primary border border-2",
+            )}
 
             onClick={async () => {
               if (!appRef.current) {

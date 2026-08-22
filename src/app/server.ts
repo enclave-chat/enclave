@@ -3,7 +3,7 @@ import * as ed from "@noble/ed25519";
 import EnclaveWebSocket from "./ws";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { getWSUrl } from "@/lib/serverList";
-import { ServerMeta, StoredMessage } from "@/lib/types";
+import { ClientMeta, ServerMeta, StoredMessage } from "@/lib/types";
 
 ed.hashes.sha512 = sha512;
 
@@ -30,11 +30,13 @@ export default class EnclaveServer {
   public websocket?: EnclaveWebSocket;
   public meta?: ServerMeta;
   public messages: Record<string, Record<string, StoredMessage>>;
+  public users: Record<string, ClientMeta | null>;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;
     this.isSecure = isSecure;
     this.messages = {};
+    this.users = {};
   }
 
   public disconnect() {
@@ -93,5 +95,15 @@ export default class EnclaveServer {
       this.websocket.websocket.close();
       throw Error("Invalid signature");
     }
+  }
+
+  public getUsers(pubkeys: string[]) {
+    const filteredPubkeys = pubkeys.filter((pubkey) => {
+      const exists = this.users[pubkey] !== undefined;
+      if (!exists) this.users[pubkey] = null;
+      return !exists;
+    });
+
+    this.websocket?.send({ method: "GetUsers", pubkeys: filteredPubkeys });
   }
 }
