@@ -1,6 +1,7 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "@/components/page/PageView";
 import TextChannel from "./TextChannel";
+import VoiceChannel from "./VoiceChannel";
 
 export default function ChannelPage({
   appRef,
@@ -12,5 +13,7 @@ export default function ChannelPage({
   switch (appRef.current?.page?.channel.kind) {
     case "text":
       return <TextChannel appRef={appRef} />;
+    case "voice":
+      return <VoiceChannel appRef={appRef} />;
   }
 }
