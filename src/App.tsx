@@ -10,6 +10,7 @@ import {
 import Sidebar from "./components/view/Sidebar";
 import { ThemeProvider } from "next-themes";
 import Page from "./components/page/PageView";
+import { SettingsDialog } from "./components/settings/SettingsDialog";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);
@@ -54,6 +55,8 @@ export default function App() {
                 <Page appRef={appRef} />
               </ResizablePanel>
             </ResizablePanelGroup>
+
+            <SettingsDialog appRef={appRef} />
           </>
         )}
       </main>

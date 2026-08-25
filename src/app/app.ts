@@ -28,12 +28,14 @@ export default class Enclave<P = Page> {
   public accounts?: AccountsFile;
   public server?: EnclaveServer;
   public serverList: ServerList;
+  public isSettingsOpen: boolean;
   public forceRender: () => void;
   public page?: P;
 
   public constructor() {
     this.serverList = {};
     this.forceRender = () => {};
+    this.isSettingsOpen = false;
   }
 
   public async init() {
