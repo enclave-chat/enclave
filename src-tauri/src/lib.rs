@@ -16,6 +16,7 @@ pub fn run() {
             commands::accounts::save_accounts,
             commands::accounts::get_accounts,
             commands::audio::list_input_devices,
+            commands::audio::list_output_devices,
             commands::config::update_config,
             commands::config::save_config,
             commands::config::get_config,

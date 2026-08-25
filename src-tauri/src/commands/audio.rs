@@ -1,14 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AudioDevice {
-    pub name: String,
-}
 
 #[tauri::command]
-pub fn list_input_devices() -> Result<Vec<AudioDevice>, String> {
+pub fn list_input_devices() -> Result<Vec<String>, String> {
     let host = cpal::default_host();
 
     let devices = host
@@ -16,10 +9,19 @@ pub fn list_input_devices() -> Result<Vec<AudioDevice>, String> {
         .map_err(|e| format!("Failed to enumerate input devices: {e}"))?;
 
     Ok(devices
-        .filter_map(|d| {
-            Some(AudioDevice {
-                name: d.description().ok()?.name().to_string(),
-            })
-        })
+        .filter_map(|d| Some(d.description().ok()?.name().to_string()))
+        .collect())
+}
+
+#[tauri::command]
+pub fn list_output_devices() -> Result<Vec<String>, String> {
+    let host = cpal::default_host();
+
+    let devices = host
+        .output_devices()
+        .map_err(|e| format!("Failed to enumerate output devices: {e}"))?;
+
+    Ok(devices
+        .filter_map(|d| Some(d.description().ok()?.name().to_string()))
         .collect())
 }

@@ -1,3 +1,4 @@
+use cpal::traits::{DeviceTrait, HostTrait};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::sync::Mutex;
@@ -6,13 +7,25 @@ use tauri::{AppHandle, Manager, State};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
-    pub audio_device_name: Option<String>,
+    pub input_device_name: Option<String>,
+    pub output_device_name: Option<String>,
+    pub input_volume: u8,
+    pub output_volume: u8,
 }
 
 impl Default for Config {
     fn default() -> Self {
+        let host = cpal::default_host();
+
         Self {
-            audio_device_name: None,
+            input_device_name: host
+                .default_input_device()
+                .and_then(|d| Some(d.description().ok()?.name().to_string())),
+            output_device_name: host
+                .default_output_device()
+                .and_then(|d| Some(d.description().ok()?.name().to_string())),
+            input_volume: 0,
+            output_volume: 0,
         }
     }
 }

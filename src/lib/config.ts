@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export type Config = {
-  audioDeviceName: string | null;
+  outputDeviceName: string | null;
+  inputDeviceName: string | null;
+  inputVolume: number;
+  outputVolume: number;
 };
 
 export async function updateConfig(config: Config): Promise<void> {
