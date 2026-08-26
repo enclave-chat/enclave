@@ -1,6 +1,9 @@
 use std::{
     net::UdpSocket,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -40,9 +43,12 @@ pub struct VoiceState {
 
 pub struct VoiceSession {
     pub input_stream: cpal::Stream,
-    pub output_stream: cpal::Stream,
+    // Wrapped so the watcher thread can swap in a freshly rebuilt stream.
+    pub output_stream: Arc<Mutex<cpal::Stream>>,
     pub socket: Arc<UdpSocket>,
     pub pin: u64,
+    // Set to true when the watcher thread should stop (on disconnect).
+    pub shutdown: Arc<AtomicBool>,
 }
 
 impl Default for VoiceState {
@@ -51,6 +57,16 @@ impl Default for VoiceState {
             session: Mutex::new(None),
         }
     }
+}
+
+#[tauri::command]
+pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
+    if let Some(session) = voice_state.session.lock().unwrap().take() {
+        // Tell the watcher thread to stop before dropping the streams.
+        session.shutdown.store(true, Ordering::SeqCst);
+    }
+    // Dropping the session stops both cpal streams.
+    Ok(())
 }
 
 #[tauri::command]
@@ -107,6 +123,8 @@ pub fn connect_to_vc(
             .ok_or("No default output device")?,
     };
 
+    // ---------- INPUT (mic -> UDP) ----------
+
     let input_socket = socket.clone();
     let mut input_config: cpal::StreamConfig = input_device
         .default_input_config()
@@ -114,13 +132,11 @@ pub fn connect_to_vc(
         .into();
 
     input_config.channels = 1;
+    let input_sample_rate = input_config.sample_rate;
 
     let mut input_resampler = resampler::ResamplerFft::new(
         1,
-        input_config
-            .sample_rate
-            .try_into()
-            .map_err(|e| format!("{e:?}"))?,
+        input_sample_rate.try_into().map_err(|e| format!("{e:?}"))?,
         resampler::SampleRate::Hz44100,
     );
 
@@ -132,26 +148,38 @@ pub fn connect_to_vc(
             move |data: &[f32], _| {
                 input_buffer.extend_from_slice(data);
 
-                while input_buffer.len() >= 1024 {
-                    let input: Vec<f32> = input_buffer.drain(..1024).collect();
+                let frame_size = input_resampler.chunk_size_input();
 
-                    let output_len =
-                        ((1024.0 * 44100.0 / input_config.sample_rate as f32).ceil()) as usize;
+                while input_buffer.len() >= frame_size {
+                    let input: Vec<f32> = input_buffer.drain(..frame_size).collect();
 
-                    let mut output = vec![0.0f32; output_len];
+                    let mut output = vec![0.0f32; input_resampler.chunk_size_output()];
 
                     if let Err(e) = input_resampler.resample(&input, &mut output) {
                         eprintln!("[vc] failed to resample input: {e}");
                         continue;
                     }
 
-                    let mut packet = Vec::with_capacity(output.len() * 4);
+                    // f32 -> i16 PCM
+                    let mut packet = Vec::with_capacity(output.len() * 2);
 
                     for sample in output {
-                        packet.extend_from_slice(&sample.to_be_bytes());
+                        let sample = sample.clamp(-1.0, 1.0);
+                        let pcm = (sample * i16::MAX as f32) as i16;
+
+                        packet.extend_from_slice(&pcm.to_be_bytes());
                     }
 
-                    let _ = input_socket.send(&packet);
+                    eprintln!(
+                        "[vc] sending audio: input={} samples, packet={} bytes",
+                        frame_size,
+                        packet.len()
+                    );
+
+                    match input_socket.send(&packet) {
+                        Ok(n) => eprintln!("[vc] UDP sent {n} bytes"),
+                        Err(e) => eprintln!("[vc] UDP send failed: {e}"),
+                    }
                 }
             },
             |err| eprintln!("[vc] input stream error: {err}"),
@@ -159,54 +187,104 @@ pub fn connect_to_vc(
         )
         .map_err(|e| e.to_string())?;
 
-    let output_socket = socket.clone();
-    let output_config: cpal::StreamConfig = output_device
-        .default_output_config()
-        .map_err(|e| e.to_string())?
-        .into();
-    let mut output_resampler = resampler::ResamplerFft::new(
-        1,
-        resampler::SampleRate::Hz44100,
-        output_config
-            .sample_rate
-            .try_into()
-            .map_err(|e| format!("{e:?}"))?,
-    );
+    // ---------- OUTPUT (UDP -> speakers), rebuildable on device change ----------
 
-    // shared ring buffer between the UDP-receiving task and the playback callback
     let (audio_tx, audio_rx) = std::sync::mpsc::channel::<Vec<f32>>();
+    let audio_rx = Arc::new(Mutex::new(audio_rx));
 
-    let output_stream = output_device
-        .build_output_stream(
-            output_config.clone(),
-            move |data: &mut [f32], _| {
-                if let Ok(pcm) = audio_rx.try_recv() {
-                    for (out, sample) in data.iter_mut().zip(pcm.iter()) {
-                        *out = *sample;
-                    }
+    let needs_output_rebuild = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(AtomicBool::new(false));
 
-                    // If CPAL asks for more samples than we received,
-                    // fill the remainder with silence.
-                    if pcm.len() < data.len() {
-                        data[pcm.len()..].fill(0.0);
+    // Output config is tracked in a shared cell so the UDP-receiving thread
+    // (below) always resamples toward whatever the *current* live stream expects,
+    // even after a rebuild changes the device's rate.
+    let output_config = build_output_config(&output_device)?;
+    let output_config_cell = Arc::new(Mutex::new(output_config.clone()));
+
+    let initial_output_stream = build_output_stream(
+        &output_device,
+        &output_config,
+        audio_rx.clone(),
+        needs_output_rebuild.clone(),
+    )?;
+    initial_output_stream.play().map_err(|e| e.to_string())?;
+
+    let output_stream = Arc::new(Mutex::new(initial_output_stream));
+
+    // Watcher thread: rebuilds the output stream whenever the device signals
+    // its config has changed (e.g. "Device sample rate changed"), since cpal
+    // streams can't be reconfigured in place — only rebuilt from scratch.
+    {
+        let output_device = output_device.clone();
+        let audio_rx = audio_rx.clone();
+        let needs_output_rebuild = needs_output_rebuild.clone();
+        let output_stream = output_stream.clone();
+        let output_config_cell = output_config_cell.clone();
+        let shutdown = shutdown.clone();
+
+        std::thread::spawn(move || loop {
+            if shutdown.load(Ordering::SeqCst) {
+                return;
+            }
+
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
+            if needs_output_rebuild.swap(false, Ordering::SeqCst) {
+                match build_output_config(&output_device).and_then(|new_config| {
+                    build_output_stream(
+                        &output_device,
+                        &new_config,
+                        audio_rx.clone(),
+                        needs_output_rebuild.clone(),
+                    )
+                    .map(|stream| (new_config, stream))
+                }) {
+                    Ok((new_config, new_stream)) => {
+                        if let Err(e) = new_stream.play() {
+                            eprintln!("[vc] failed to start rebuilt output stream: {e}");
+                            continue;
+                        }
+                        *output_config_cell.lock().unwrap() = new_config;
+                        *output_stream.lock().unwrap() = new_stream;
+                        eprintln!("[vc] output stream rebuilt after device change");
                     }
-                } else {
-                    data.fill(0.0);
+                    Err(e) => eprintln!("[vc] failed to rebuild output stream: {e}"),
                 }
-            },
-            |err| eprintln!("[vc] output stream error: {err}"),
-            None,
-        )
-        .map_err(|e| e.to_string())?;
+            }
+        });
+    }
 
-    // background thread reading incoming UDP audio, feeding the playback channel
-    let recv_socket = output_socket.clone();
-    std::thread::spawn(move || {
-        let mut buf = [0u8; 4096];
-        let mut output_buffer = Vec::<f32>::new();
+    // ---------- UDP receive thread: incoming audio -> resample -> playback channel ----------
 
-        loop {
-            if let Ok(len) = recv_socket.recv(&mut buf) {
+    let recv_socket = socket.clone();
+    {
+        let output_config_cell = output_config_cell.clone();
+        let shutdown = shutdown.clone();
+
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            let mut output_buffer = Vec::<f32>::new();
+            let mut output_resampler = resampler::ResamplerFft::new(
+                1,
+                resampler::SampleRate::Hz44100,
+                output_config_cell
+                    .lock()
+                    .unwrap()
+                    .sample_rate
+                    .try_into()
+                    .unwrap(),
+            );
+            let mut last_rate = output_config_cell.lock().unwrap().sample_rate;
+
+            loop {
+                if shutdown.load(Ordering::SeqCst) {
+                    return;
+                }
+
+                let Ok(len) = recv_socket.recv(&mut buf) else {
+                    continue;
+                };
+
                 let pcm = buf[..len]
                     .chunks_exact(4)
                     .map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
@@ -214,51 +292,114 @@ pub fn connect_to_vc(
 
                 output_buffer.extend_from_slice(&pcm);
 
-                while output_buffer.len() >= 1024 {
-                    let input: Vec<f32> = output_buffer.drain(..1024).collect();
+                let current_config = output_config_cell.lock().unwrap().clone();
 
-                    let output_len =
-                        ((1024.0 * output_config.sample_rate as f32 / 44100.0).ceil()) as usize;
+                // If the output device's rate changed underneath us (rebuild
+                // happened), rebuild the resampler to target the new rate too.
+                if current_config.sample_rate != last_rate {
+                    output_resampler = resampler::ResamplerFft::new(
+                        1,
+                        resampler::SampleRate::Hz44100,
+                        match current_config.sample_rate.try_into() {
+                            Ok(rate) => rate,
+                            Err(_) => {
+                                eprintln!("[vc] unsupported output sample rate, skipping rebuild");
+                                last_rate = current_config.sample_rate;
+                                continue;
+                            }
+                        },
+                    );
+                    last_rate = current_config.sample_rate;
+                }
 
-                    let mut pcm_out = vec![0.0f32; output_len];
+                let frame_size = output_resampler.chunk_size_input();
+
+                while output_buffer.len() >= frame_size {
+                    let input: Vec<f32> = output_buffer.drain(..frame_size).collect();
+
+                    let mut pcm_out = vec![0.0f32; output_resampler.chunk_size_output()];
 
                     if let Err(e) = output_resampler.resample(&input, &mut pcm_out) {
                         eprintln!("[vc] failed to resample output: {e}");
                         continue;
                     }
 
-                    if audio_tx
-                        .send(if output_config.channels > 1 {
-                            stereo_to_mono(&pcm_out)
-                        } else {
-                            pcm_out
-                        })
-                        .is_err()
-                    {
+                    let mono = if current_config.channels > 1 {
+                        stereo_to_mono(&pcm_out)
+                    } else {
+                        pcm_out
+                    };
+
+                    // audio_rx/tx were built together, so this send only fails
+                    // if every receiver was dropped — i.e. shutdown in progress.
+                    let tx_result = {
+                        let _rx_guard = audio_rx.lock().unwrap(); // keep receiver alive
+                        audio_tx.send(mono)
+                    };
+
+                    if tx_result.is_err() {
                         return;
                     }
                 }
             }
-        }
-    });
+        });
+    }
 
     input_stream.play().map_err(|e| e.to_string())?;
-    output_stream.play().map_err(|e| e.to_string())?;
 
     *voice_state.session.lock().unwrap() = Some(VoiceSession {
         input_stream,
         output_stream,
         socket,
         pin,
+        shutdown,
     });
 
     Ok(())
 }
 
-#[tauri::command]
-pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
-    *voice_state.session.lock().unwrap() = None; // dropping stops both cpal streams
-    Ok(())
+fn build_output_config(output_device: &cpal::Device) -> Result<cpal::StreamConfig, String> {
+    Ok(output_device
+        .default_output_config()
+        .map_err(|e| e.to_string())?
+        .into())
+}
+
+fn build_output_stream(
+    output_device: &cpal::Device,
+    output_config: &cpal::StreamConfig,
+    audio_rx: Arc<Mutex<std::sync::mpsc::Receiver<Vec<f32>>>>,
+    needs_rebuild: Arc<AtomicBool>,
+) -> Result<cpal::Stream, String> {
+    output_device
+        .build_output_stream(
+            *output_config,
+            move |data: &mut [f32], _| {
+                let rx = audio_rx.lock().unwrap();
+                if let Ok(pcm) = rx.try_recv() {
+                    for (out, sample) in data.iter_mut().zip(pcm.iter()) {
+                        *out = *sample;
+                    }
+                    if pcm.len() < data.len() {
+                        data[pcm.len()..].fill(0.0);
+                    }
+                } else {
+                    data.fill(0.0);
+                }
+            },
+            {
+                let needs_rebuild = needs_rebuild.clone();
+                move |err| {
+                    eprintln!("[vc] output stream error: {err}");
+                    let msg = err.to_string();
+                    if msg.contains("sample rate changed") || msg.contains("DeviceNotAvailable") {
+                        needs_rebuild.store(true, Ordering::SeqCst);
+                    }
+                }
+            },
+            None,
+        )
+        .map_err(|e| e.to_string())
 }
 
 fn stereo_to_mono(stereo_data: &[f32]) -> Vec<f32> {
