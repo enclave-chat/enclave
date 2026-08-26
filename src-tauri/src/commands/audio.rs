@@ -24,8 +24,7 @@ const PACKET_SAMPLES: usize = 960; // 20ms @ 48kHz
 const HEADER_SIZE: usize = 4;
 const MAX_PACKET_SIZE: usize = 4096;
 
-const JITTER_BUFFER_MS: usize = 60;
-const INITIAL_PACKET_CUSHION: usize = JITTER_BUFFER_MS / 20; // 3 packets
+const INITIAL_PACKET_CUSHION: usize = 5;
 
 // ============================================================================
 // STATE
