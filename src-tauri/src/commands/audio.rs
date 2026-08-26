@@ -11,7 +11,7 @@ use std::{
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
-    traits::{Consumer, Producer, Split},
+    traits::{Consumer, Observer, Producer, Split},
     HeapRb,
 };
 use tauri::State;
@@ -21,6 +21,11 @@ use crate::commands::config::ConfigState;
 const PACKET_SAMPLES: usize = 882; // 20ms @ 44.1kHz
 const HEADER_SIZE: usize = 4;
 const MAX_PACKET_SIZE: usize = 4096;
+
+// Jitter buffer settings
+const JITTER_BUFFER_MS: usize = 60; // Cushion size before playback starts
+const PACKET_DURATION_MS: usize = 20;
+const INITIAL_PACKET_CUSHION: usize = JITTER_BUFFER_MS / PACKET_DURATION_MS; // 3 packets
 
 // ============================================================================
 // STATE
@@ -166,12 +171,10 @@ pub fn connect_to_vc(
     // PLAYBACK BUFFER (RingBuffer)
     // ------------------------------------------------------------------------
 
-    // Buffer 2 seconds of audio max (prevents infinite latency growth)
     let max_capacity = 48000;
     let rb = HeapRb::<f32>::new(max_capacity);
     let (producer, consumer) = rb.split();
 
-    // Split locks: UDP thread and Audio thread will never block each other
     let producer_lock = Arc::new(Mutex::new(producer));
     let consumer_lock = Arc::new(Mutex::new(consumer));
 
@@ -317,7 +320,7 @@ pub fn connect_to_vc(
     }
 
     // ------------------------------------------------------------------------
-    // UDP RECEIVE
+    // UDP RECEIVE (JITTER BUFFER INCLUDED)
     // ------------------------------------------------------------------------
 
     {
@@ -340,6 +343,7 @@ pub fn connect_to_vc(
 
             let mut packets: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
             let mut expected: Option<u32> = None;
+            let mut is_prebuffering = true;
 
             let mut resample_buffer = Vec::<f32>::new();
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
@@ -372,6 +376,11 @@ pub fn connect_to_vc(
                     }
 
                     Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                        // Reset jitter state if connection completely drops
+                        if packets.is_empty() {
+                            expected = None;
+                            is_prebuffering = true;
+                        }
                         continue;
                     }
 
@@ -383,7 +392,7 @@ pub fn connect_to_vc(
                 }
 
                 // ----------------------------------------------------------------
-                // OUTPUT CONFIG
+                // OUTPUT CONFIG CHANGE
                 // ----------------------------------------------------------------
 
                 let config = output_config.lock().unwrap().clone();
@@ -397,22 +406,33 @@ pub fn connect_to_vc(
                             packets.clear();
                             resample_buffer.clear();
                             expected = None;
+                            is_prebuffering = true;
                         }
-
                         Err(_) => continue,
                     }
                 }
 
                 // ----------------------------------------------------------------
-                // INITIAL SEQUENCE
+                // JITTER BUFFER STATE MACHINE
                 // ----------------------------------------------------------------
 
+                if is_prebuffering {
+                    // Accumulate target packet cushion before popping
+                    if packets.len() >= INITIAL_PACKET_CUSHION {
+                        expected = packets.keys().next().copied();
+                        is_prebuffering = false;
+                    } else {
+                        continue;
+                    }
+                }
+
+                // Initialize sequence if unset
                 if expected.is_none() {
                     expected = packets.keys().next().copied();
                 }
 
                 // ----------------------------------------------------------------
-                // READ PACKETS IN ORDER
+                // DRAIN PACKETS IN SEQUENTIAL ORDER
                 // ----------------------------------------------------------------
 
                 while let Some(seq) = expected {
@@ -420,22 +440,27 @@ pub fn connect_to_vc(
                         resample_buffer.extend(samples);
                         expected = Some(seq.wrapping_add(1));
                     } else {
-                        // Missing packet.
-                        //
-                        // Don't wait for it.
-                        // Just insert 20ms of silence.
+                        // Missing frame strategy:
+                        // If future sequence numbers exist, insert Concealment (Silence)
                         if packets.keys().any(|&x| x > seq) {
                             resample_buffer.extend(std::iter::repeat(0.0).take(PACKET_SAMPLES));
-
                             expected = Some(seq.wrapping_add(1));
+                        } else {
+                            // Waiting on late packets
+                            break;
                         }
-
-                        break;
                     }
                 }
 
+                // Trim jitter buffer cache to avoid memory leak spikes on extreme latency drops
+                if packets.len() > 50 {
+                    packets.clear();
+                    expected = None;
+                    is_prebuffering = true;
+                }
+
                 // ----------------------------------------------------------------
-                // RESAMPLE
+                // RESAMPLE & POPULATE RINGBUFFER
                 // ----------------------------------------------------------------
 
                 let input_size = output_resampler.chunk_size_input();
@@ -450,16 +475,18 @@ pub fn connect_to_vc(
                         continue;
                     }
 
-                    let channels = config.channels.max(1) as usize;
-
                     let mut prod = producer_lock.lock().unwrap();
 
+                    // Latency Drift Protection: prevent total queue build-up past ~60ms
+                    let target_sample_rate = config.sample_rate as usize;
+                    let max_ring_buffer_samples = (target_sample_rate / 1000) * 60;
+
+                    // Fix occupied_len check and overflow protection
+                    // Note: We avoid calling try_pop() on a Producer. If the buffer is full,
+                    // try_push will naturally fail and drop the overflow sample.
                     for sample in output {
-                        for _ in 0..channels {
-                            // try_push will return an error if the buffer is full (2 seconds).
-                            // By ignoring the error, we simply drop the oldest overflow packets,
-                            // which naturally prevents latency from growing forever.
-                            let _ = prod.try_push(sample);
+                        if (*prod).occupied_len() < max_ring_buffer_samples {
+                            let _ = (*prod).try_push(sample);
                         }
                     }
                 }
@@ -532,10 +559,9 @@ fn build_output_stream<C>(
 where
     C: Consumer<Item = f32> + Send + 'static,
 {
-    // Jitter Buffer: wait for ~60ms of audio before starting playback
     let channels = config.channels as usize;
     let sample_rate = config.sample_rate as usize;
-    let jitter_cushion_samples = (sample_rate / 1000) * 60 * channels;
+    let jitter_cushion_samples = (sample_rate / 1000) * 40; // 40ms stream cushion
 
     let mut is_buffering = true;
 
@@ -543,30 +569,32 @@ where
         .build_output_stream(
             config.clone(),
             move |data: &mut [f32], _| {
-                // The audio thread only locks the consumer side.
-                // Contention is zero unless the stream is actively crashing.
                 let mut cons = consumer_lock.lock().unwrap();
 
-                // 1. Jitter Buffer State Machine
+                // 1. Initial/Recovering Cushioning
                 if is_buffering {
-                    if cons.occupied_len() >= jitter_cushion_samples {
-                        is_buffering = false; // We have enough cushion, start!
+                    if (*cons).occupied_len() >= jitter_cushion_samples {
+                        is_buffering = false;
                     } else {
-                        data.fill(0.0); // Output silence while we wait
+                        data.fill(0.0);
                         return;
                     }
                 }
 
-                // 2. Lock-free pop
-                let read = cons.pop_slice(data);
-
-                // 3. Underrun Detection
-                if read < data.len() {
-                    // We ran out of data. Fill remainder with silence to avoid static
-                    data[read..].fill(0.0);
-
-                    // Re-enter buffering mode to rebuild our cushion
-                    is_buffering = true;
+                // 2. Sample Extraction & Channel Interleaving
+                let mut idx = 0;
+                while idx < data.len() {
+                    if let Some(mono_sample) = (*cons).try_pop() {
+                        for ch in 0..channels {
+                            data[idx + ch] = mono_sample;
+                        }
+                        idx += channels;
+                    } else {
+                        // 3. Underrun: pad rest with silence & re-enter buffering mode
+                        data[idx..].fill(0.0);
+                        is_buffering = true;
+                        break;
+                    }
                 }
             },
             {
