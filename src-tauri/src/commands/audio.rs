@@ -189,9 +189,7 @@ pub fn connect_to_vc(
 
     // ---------- OUTPUT (UDP -> speakers), rebuildable on device change ----------
 
-    let (audio_tx, audio_rx) = std::sync::mpsc::channel::<Vec<f32>>();
-    let audio_rx = Arc::new(Mutex::new(audio_rx));
-
+    let playback_buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
     let needs_output_rebuild = Arc::new(AtomicBool::new(false));
     let shutdown = Arc::new(AtomicBool::new(false));
 
@@ -204,7 +202,7 @@ pub fn connect_to_vc(
     let initial_output_stream = build_output_stream(
         &output_device,
         &output_config,
-        audio_rx.clone(),
+        playback_buffer.clone(),
         needs_output_rebuild.clone(),
     )?;
     initial_output_stream.play().map_err(|e| e.to_string())?;
@@ -216,11 +214,11 @@ pub fn connect_to_vc(
     // streams can't be reconfigured in place — only rebuilt from scratch.
     {
         let output_device = output_device.clone();
-        let audio_rx = audio_rx.clone();
         let needs_output_rebuild = needs_output_rebuild.clone();
         let output_stream = output_stream.clone();
         let output_config_cell = output_config_cell.clone();
         let shutdown = shutdown.clone();
+        let playback_buffer = playback_buffer.clone();
 
         std::thread::spawn(move || loop {
             if shutdown.load(Ordering::SeqCst) {
@@ -234,7 +232,7 @@ pub fn connect_to_vc(
                     build_output_stream(
                         &output_device,
                         &new_config,
-                        audio_rx.clone(),
+                        playback_buffer.clone(),
                         needs_output_rebuild.clone(),
                     )
                     .map(|stream| (new_config, stream))
@@ -264,6 +262,7 @@ pub fn connect_to_vc(
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
             let mut output_buffer = Vec::<f32>::new();
+
             let mut output_resampler = resampler::ResamplerFft::new(
                 1,
                 resampler::SampleRate::Hz44100,
@@ -274,6 +273,7 @@ pub fn connect_to_vc(
                     .try_into()
                     .unwrap(),
             );
+
             let mut last_rate = output_config_cell.lock().unwrap().sample_rate;
 
             loop {
@@ -285,17 +285,19 @@ pub fn connect_to_vc(
                     continue;
                 };
 
+                // UDP contains BIG-ENDIAN i16 PCM.
                 let pcm = buf[..len]
-                    .chunks_exact(4)
-                    .map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+                    .chunks_exact(2)
+                    .map(|b| {
+                        let sample = i16::from_be_bytes([b[0], b[1]]);
+                        sample as f32 / i16::MAX as f32
+                    })
                     .collect::<Vec<_>>();
 
                 output_buffer.extend_from_slice(&pcm);
 
                 let current_config = output_config_cell.lock().unwrap().clone();
 
-                // If the output device's rate changed underneath us (rebuild
-                // happened), rebuild the resampler to target the new rate too.
                 if current_config.sample_rate != last_rate {
                     output_resampler = resampler::ResamplerFft::new(
                         1,
@@ -303,12 +305,13 @@ pub fn connect_to_vc(
                         match current_config.sample_rate.try_into() {
                             Ok(rate) => rate,
                             Err(_) => {
-                                eprintln!("[vc] unsupported output sample rate, skipping rebuild");
+                                eprintln!("[vc] unsupported output sample rate");
                                 last_rate = current_config.sample_rate;
                                 continue;
                             }
                         },
                     );
+
                     last_rate = current_config.sample_rate;
                 }
 
@@ -324,22 +327,10 @@ pub fn connect_to_vc(
                         continue;
                     }
 
-                    let mono = if current_config.channels > 1 {
-                        stereo_to_mono(&pcm_out)
-                    } else {
-                        pcm_out
-                    };
+                    // Mono network audio -> device channel layout.
+                    let output = mono_to_output_channels(&pcm_out, current_config.channels);
 
-                    // audio_rx/tx were built together, so this send only fails
-                    // if every receiver was dropped — i.e. shutdown in progress.
-                    let tx_result = {
-                        let _rx_guard = audio_rx.lock().unwrap(); // keep receiver alive
-                        audio_tx.send(mono)
-                    };
-
-                    if tx_result.is_err() {
-                        return;
-                    }
+                    playback_buffer.lock().unwrap().extend(output);
                 }
             }
         });
@@ -368,30 +359,31 @@ fn build_output_config(output_device: &cpal::Device) -> Result<cpal::StreamConfi
 fn build_output_stream(
     output_device: &cpal::Device,
     output_config: &cpal::StreamConfig,
-    audio_rx: Arc<Mutex<std::sync::mpsc::Receiver<Vec<f32>>>>,
+    playback_buffer: Arc<Mutex<Vec<f32>>>,
     needs_rebuild: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     output_device
         .build_output_stream(
-            *output_config,
+            output_config.clone(),
             move |data: &mut [f32], _| {
-                let rx = audio_rx.lock().unwrap();
-                if let Ok(pcm) = rx.try_recv() {
-                    for (out, sample) in data.iter_mut().zip(pcm.iter()) {
-                        *out = *sample;
+                let mut buffer = playback_buffer.lock().unwrap();
+
+                for out in data.iter_mut() {
+                    if buffer.is_empty() {
+                        *out = 0.0;
+                    } else {
+                        *out = buffer.remove(0);
                     }
-                    if pcm.len() < data.len() {
-                        data[pcm.len()..].fill(0.0);
-                    }
-                } else {
-                    data.fill(0.0);
                 }
             },
             {
                 let needs_rebuild = needs_rebuild.clone();
+
                 move |err| {
                     eprintln!("[vc] output stream error: {err}");
+
                     let msg = err.to_string();
+
                     if msg.contains("sample rate changed") || msg.contains("DeviceNotAvailable") {
                         needs_rebuild.store(true, Ordering::SeqCst);
                     }
@@ -413,4 +405,22 @@ fn stereo_to_mono(stereo_data: &[f32]) -> Vec<f32> {
     }
 
     mono_data
+}
+
+fn mono_to_output_channels(mono: &[f32], channels: u16) -> Vec<f32> {
+    if channels <= 1 {
+        return mono.to_vec();
+    }
+
+    let channels = channels as usize;
+
+    let mut output = Vec::with_capacity(mono.len() * channels);
+
+    for &sample in mono {
+        for _ in 0..channels {
+            output.push(sample);
+        }
+    }
+
+    output
 }
