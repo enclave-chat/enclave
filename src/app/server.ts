@@ -31,6 +31,7 @@ export default class EnclaveServer {
   public meta?: ServerMeta;
   public messages: Record<string, Record<string, StoredMessage>>;
   public users: Record<string, ClientMeta | null>;
+  public voiceJoin?: (pin: number, channelId: string) => void;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;

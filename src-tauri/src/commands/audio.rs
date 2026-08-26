@@ -66,10 +66,9 @@ pub fn connect_to_vc(
 
     let socket = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
     socket.connect(&hostname).map_err(|e| e.to_string())?;
-    socket.set_nonblocking(true).map_err(|e| e.to_string())?;
     let socket = Arc::new(socket);
 
-    // Send the pin as the very first packet — this is your UDP "initialize"
+    // Send the pin as the very first packet — authenticates this UDP session
     socket
         .send(&pin.to_be_bytes())
         .map_err(|e| format!("Failed to send pincode: {e}"))?;
@@ -118,16 +117,17 @@ pub fn connect_to_vc(
         .build_input_stream(
             input_config,
             move |data: &[f32], _| {
-                // convert f32 -> i16 PCM, prefix with pin, send over UDP
                 let pcm: Vec<i16> = data
                     .iter()
                     .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
                     .collect();
 
-                let mut packet = pin.to_be_bytes().to_vec();
-                packet.extend(pcm.iter().flat_map(|s| s.to_be_bytes()));
+                let mut packet = Vec::with_capacity(pcm.len() * 2);
+                for sample in &pcm {
+                    packet.extend_from_slice(&sample.to_be_bytes());
+                }
 
-                let _ = input_socket.send(&packet); // non-blocking, drop on failure
+                let _ = input_socket.send(&packet);
             },
             |err| eprintln!("Input stream error: {err}"),
             None,

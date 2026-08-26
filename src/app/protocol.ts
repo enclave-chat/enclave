@@ -29,6 +29,11 @@ export type ClientMethod =
       method: "MessageDeleted";
       channel_id: string;
       message_id: string;
+    }
+  | {
+      method: "JoinVoice";
+      channel_id: string;
+      pin: number;
     };
 
 export type ServerMethod =
@@ -71,4 +76,8 @@ export type ServerMethod =
       method: "DeleteMessage";
       channel_id: string;
       message_id: string;
+    }
+  | {
+      method: "JoinVoice";
+      channel_id: string;
     };

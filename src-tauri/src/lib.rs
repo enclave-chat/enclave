@@ -10,6 +10,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(ConfigState(Mutex::new(commands::config::Config::default())))
+        .manage(commands::audio::VoiceState::default())
         .invoke_handler(tauri::generate_handler![
             commands::server_list::save_server_list,
             commands::server_list::get_server_list,

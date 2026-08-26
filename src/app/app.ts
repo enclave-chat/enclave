@@ -206,6 +206,10 @@ export default class Enclave<P = Page> {
         server.messages[msg.channel_id][msg.message.id] = msg.message;
         this.forceRender();
         return;
+
+      case "JoinVoice":
+        server.voiceJoin && server.voiceJoin(msg.pin, msg.channel_id);
+        return;
     }
   }
 }

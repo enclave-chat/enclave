@@ -20,7 +20,19 @@ export default function VoiceChannel({
     lastChannelId.current = channel.id;
 
     invoke("disconnect_from_vc");
-    invoke("connect_to_vc", { hostname });
+
+    if (channel.kind !== "voice" || !appRef.current?.server) return;
+
+    appRef.current.server.voiceJoin = (pin, channelId) => {
+      invoke("connect_to_vc", { hostname, pin, channelId }).catch(
+        console.error,
+      );
+    };
+
+    appRef.current.server.websocket?.send({
+      method: "JoinVoice",
+      channel_id: channel.id,
+    });
   }, [channel.id]);
 
   return (

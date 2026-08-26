@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { User, Palette, Mic, Volume2 } from "lucide-react";
+import { User, Palette, Volume2 } from "lucide-react";
 import { ProfileSettings } from "./ProfileSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { AudioVideoSettings } from "./AudioVideoSettings";
