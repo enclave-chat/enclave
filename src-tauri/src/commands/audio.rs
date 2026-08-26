@@ -108,28 +108,48 @@ pub fn connect_to_vc(
     };
 
     let input_socket = socket.clone();
-    let input_config = input_device
+    let mut input_config: cpal::StreamConfig = input_device
         .default_input_config()
         .map_err(|e| e.to_string())?
         .into();
+
+    input_config.channels = 1;
+
+    let mut input_resampler = resampler::ResamplerFft::new(
+        1,
+        input_config
+            .sample_rate
+            .try_into()
+            .map_err(|e| format!("{e:?}"))?,
+        resampler::SampleRate::Hz44100,
+    );
+
+    let mut input_buffer = Vec::<f32>::new();
 
     let input_stream = input_device
         .build_input_stream(
             input_config,
             move |data: &[f32], _| {
-                let pcm: Vec<i16> = data
-                    .iter()
-                    .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-                    .collect();
+                input_buffer.extend_from_slice(data);
 
-                let pcm_44k = resample_linear(&pcm, input_config.sample_rate, 44_100);
+                while input_buffer.len() >= 1024 {
+                    let input: Vec<f32> = input_buffer.drain(..1024).collect();
 
-                let mut packet = Vec::with_capacity(pcm_44k.len() * 2);
-                for sample in &pcm_44k {
-                    packet.extend_from_slice(&sample.to_be_bytes());
+                    let mut output = vec![0.0f32; 1024];
+
+                    if let Err(e) = input_resampler.resample(&input, &mut output) {
+                        eprintln!("[vc] failed to resample input: {e}");
+                        continue;
+                    }
+
+                    let mut packet = Vec::with_capacity(output.len() * 4);
+
+                    for sample in output {
+                        packet.extend_from_slice(&sample.to_be_bytes());
+                    }
+
+                    let _ = input_socket.send(&packet);
                 }
-
-                let _ = input_socket.send(&packet);
             },
             |err| eprintln!("[vc] input stream error: {err}"),
             None,
@@ -137,13 +157,23 @@ pub fn connect_to_vc(
         .map_err(|e| e.to_string())?;
 
     let output_socket = socket.clone();
-    let output_config = output_device
+    let mut output_config: cpal::StreamConfig = output_device
         .default_output_config()
         .map_err(|e| e.to_string())?
         .into();
+    let mut output_resampler = resampler::ResamplerFft::new(
+        1,
+        resampler::SampleRate::Hz44100,
+        output_config
+            .sample_rate
+            .try_into()
+            .map_err(|e| format!("{e:?}"))?,
+    );
+
+    output_config.channels = 1;
 
     // shared ring buffer between the UDP-receiving task and the playback callback
-    let (audio_tx, audio_rx) = std::sync::mpsc::channel::<Vec<i16>>();
+    let (audio_tx, audio_rx) = std::sync::mpsc::channel::<[f32; 1024]>();
 
     let output_stream = output_device
         .build_output_stream(
@@ -152,7 +182,7 @@ pub fn connect_to_vc(
                 if let Ok(pcm) = audio_rx.try_recv() {
                     eprintln!("[vc] playing {} samples", pcm.len());
                     for (out, sample) in data.iter_mut().zip(pcm.iter()) {
-                        *out = *sample as f32 / i16::MAX as f32;
+                        *out = *sample;
                     }
                 } else {
                     data.fill(0.0);
@@ -167,20 +197,29 @@ pub fn connect_to_vc(
     let recv_socket = output_socket.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 4096];
+        let mut output_buffer = Vec::<f32>::new();
+
         loop {
             if let Ok(len) = recv_socket.recv(&mut buf) {
-                let pcm: Vec<i16> = buf[..len]
-                    .chunks_exact(2)
-                    .map(|b| i16::from_be_bytes([b[0], b[1]]))
-                    .collect();
+                let pcm = buf[..len]
+                    .chunks_exact(4)
+                    .map(|b| f32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+                    .collect::<Vec<_>>();
 
-                let pcm_out = resample_linear(&pcm, 44_100, output_config.sample_rate);
+                output_buffer.extend_from_slice(&pcm);
 
-                match audio_tx.send(pcm_out) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        eprintln!("[vc] audio channel disconnected: {e}");
-                        break;
+                while output_buffer.len() >= 1024 {
+                    let input: Vec<f32> = output_buffer.drain(..1024).collect();
+
+                    let mut pcm_out = [0.0f32; 1024];
+
+                    if let Err(e) = output_resampler.resample(&input, &mut pcm_out) {
+                        eprintln!("[vc] failed to resample output: {e}");
+                        continue;
+                    }
+
+                    if audio_tx.send(pcm_out).is_err() {
+                        return;
                     }
                 }
             }
@@ -204,28 +243,4 @@ pub fn connect_to_vc(
 pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
     *voice_state.session.lock().unwrap() = None; // dropping stops both cpal streams
     Ok(())
-}
-
-fn resample_linear(input: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
-    if input.is_empty() || from_rate == to_rate {
-        return input.to_vec();
-    }
-
-    let output_len = (input.len() as u64 * to_rate as u64 / from_rate as u64) as usize;
-
-    let mut output = Vec::with_capacity(output_len);
-
-    for i in 0..output_len {
-        let position = i as f64 * from_rate as f64 / to_rate as f64;
-
-        let index = position.floor() as usize;
-        let fraction = position - index as f64;
-
-        let a = input[index.min(input.len() - 1)] as f64;
-        let b = input[(index + 1).min(input.len() - 1)] as f64;
-
-        output.push((a + (b - a) * fraction) as i16);
-    }
-
-    output
 }
