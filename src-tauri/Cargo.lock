@@ -963,6 +963,7 @@ version = "0.1.0"
 dependencies = [
  "cpal",
  "resampler",
+ "ringbuf",
  "serde",
  "serde_json",
  "tauri",
@@ -2997,6 +2998,17 @@ name = "resampler"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28fdbea87ff02ebbfd904079d1e52138c0c7fbaa3aaddca4a1b9c7d3f85749f2"
+
+[[package]]
+name = "ringbuf"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a158e09ede21a14b172ca6cdd6208386c6ae2cb6acef58d774368ef8c450dfa7"
+dependencies = [
+ "crossbeam-utils",
+ "portable-atomic",
+ "portable-atomic-util",
+]
 
 [[package]]
 name = "rustc-hash"

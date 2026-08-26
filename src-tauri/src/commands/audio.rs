@@ -10,6 +10,10 @@ use std::{
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use ringbuf::{
+    traits::{Consumer, Producer, Split},
+    HeapRb,
+};
 use tauri::State;
 
 use crate::commands::config::ConfigState;
@@ -159,10 +163,17 @@ pub fn connect_to_vc(
     let shutdown = Arc::new(AtomicBool::new(false));
 
     // ------------------------------------------------------------------------
-    // PLAYBACK BUFFER
+    // PLAYBACK BUFFER (RingBuffer)
     // ------------------------------------------------------------------------
 
-    let playback_buffer = Arc::new(Mutex::new(std::collections::VecDeque::<f32>::new()));
+    // Buffer 2 seconds of audio max (prevents infinite latency growth)
+    let max_capacity = 48000;
+    let rb = HeapRb::<f32>::new(max_capacity);
+    let (producer, consumer) = rb.split();
+
+    // Split locks: UDP thread and Audio thread will never block each other
+    let producer_lock = Arc::new(Mutex::new(producer));
+    let consumer_lock = Arc::new(Mutex::new(consumer));
 
     // ------------------------------------------------------------------------
     // OUTPUT
@@ -176,7 +187,7 @@ pub fn connect_to_vc(
     let output_stream = build_output_stream(
         &output_device,
         &output_config.lock().unwrap(),
-        playback_buffer.clone(),
+        consumer_lock.clone(),
         needs_output_rebuild.clone(),
     )?;
 
@@ -267,7 +278,7 @@ pub fn connect_to_vc(
         let output_device = output_device.clone();
         let output_stream = output_stream.clone();
         let output_config = output_config.clone();
-        let playback_buffer = playback_buffer.clone();
+        let consumer_lock = consumer_lock.clone();
         let needs_rebuild = needs_output_rebuild.clone();
         let shutdown = shutdown.clone();
 
@@ -287,7 +298,7 @@ pub fn connect_to_vc(
                 let Ok(new_stream) = build_output_stream(
                     &output_device,
                     &new_config,
-                    playback_buffer.clone(),
+                    consumer_lock.clone(),
                     needs_rebuild.clone(),
                 ) else {
                     needs_rebuild.store(true, Ordering::SeqCst);
@@ -298,8 +309,6 @@ pub fn connect_to_vc(
                     needs_rebuild.store(true, Ordering::SeqCst);
                     continue;
                 }
-
-                playback_buffer.lock().unwrap().clear();
 
                 *output_config.lock().unwrap() = new_config;
                 *output_stream.lock().unwrap() = new_stream;
@@ -313,7 +322,6 @@ pub fn connect_to_vc(
 
     {
         let socket = socket.clone();
-        let playback_buffer = playback_buffer.clone();
         let output_config = output_config.clone();
         let shutdown = shutdown.clone();
 
@@ -388,7 +396,6 @@ pub fn connect_to_vc(
 
                             packets.clear();
                             resample_buffer.clear();
-                            playback_buffer.lock().unwrap().clear();
                             expected = None;
                         }
 
@@ -445,19 +452,15 @@ pub fn connect_to_vc(
 
                     let channels = config.channels.max(1) as usize;
 
-                    let mut queue = playback_buffer.lock().unwrap();
+                    let mut prod = producer_lock.lock().unwrap();
 
                     for sample in output {
                         for _ in 0..channels {
-                            queue.push_back(sample);
+                            // try_push will return an error if the buffer is full (2 seconds).
+                            // By ignoring the error, we simply drop the oldest overflow packets,
+                            // which naturally prevents latency from growing forever.
+                            let _ = prod.try_push(sample);
                         }
-                    }
-
-                    // Don't let latency grow forever.
-                    let max_samples = config.sample_rate as usize * channels / 5;
-
-                    while queue.len() > max_samples {
-                        queue.pop_front();
                     }
                 }
             }
@@ -520,30 +523,57 @@ fn create_output_resampler(
 // OUTPUT STREAM
 // ============================================================================
 
-fn build_output_stream(
+fn build_output_stream<C>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
-    playback_buffer: Arc<Mutex<std::collections::VecDeque<f32>>>,
+    consumer_lock: Arc<Mutex<C>>,
     needs_rebuild: Arc<AtomicBool>,
-) -> Result<cpal::Stream, String> {
+) -> Result<cpal::Stream, String>
+where
+    C: Consumer<Item = f32> + Send + 'static,
+{
+    // Jitter Buffer: wait for ~60ms of audio before starting playback
+    let channels = config.channels as usize;
+    let sample_rate = config.sample_rate as usize;
+    let jitter_cushion_samples = (sample_rate / 1000) * 60 * channels;
+
+    let mut is_buffering = true;
+
     device
         .build_output_stream(
             config.clone(),
             move |data: &mut [f32], _| {
-                let mut queue = playback_buffer.lock().unwrap();
+                // The audio thread only locks the consumer side.
+                // Contention is zero unless the stream is actively crashing.
+                let mut cons = consumer_lock.lock().unwrap();
 
-                for sample in data {
-                    *sample = queue.pop_front().unwrap_or(0.0);
+                // 1. Jitter Buffer State Machine
+                if is_buffering {
+                    if cons.occupied_len() >= jitter_cushion_samples {
+                        is_buffering = false; // We have enough cushion, start!
+                    } else {
+                        data.fill(0.0); // Output silence while we wait
+                        return;
+                    }
+                }
+
+                // 2. Lock-free pop
+                let read = cons.pop_slice(data);
+
+                // 3. Underrun Detection
+                if read < data.len() {
+                    // We ran out of data. Fill remainder with silence to avoid static
+                    data[read..].fill(0.0);
+
+                    // Re-enter buffering mode to rebuild our cushion
+                    is_buffering = true;
                 }
             },
             {
                 let needs_rebuild = needs_rebuild.clone();
-
                 move |err| {
                     eprintln!("[vc] output error: {err}");
-
                     let message = err.to_string();
-
                     if message.contains("sample rate changed")
                         || message.contains("DeviceNotAvailable")
                         || message.contains("device not available")
