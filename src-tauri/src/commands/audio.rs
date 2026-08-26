@@ -135,7 +135,10 @@ pub fn connect_to_vc(
                 while input_buffer.len() >= 1024 {
                     let input: Vec<f32> = input_buffer.drain(..1024).collect();
 
-                    let mut output = vec![0.0f32; 1024];
+                    let output_len =
+                        ((1024.0 * 44100.0 / input_config.sample_rate as f32).ceil()) as usize;
+
+                    let mut output = vec![0.0f32; output_len];
 
                     if let Err(e) = input_resampler.resample(&input, &mut output) {
                         eprintln!("[vc] failed to resample input: {e}");
@@ -157,7 +160,7 @@ pub fn connect_to_vc(
         .map_err(|e| e.to_string())?;
 
     let output_socket = socket.clone();
-    let mut output_config: cpal::StreamConfig = output_device
+    let output_config: cpal::StreamConfig = output_device
         .default_output_config()
         .map_err(|e| e.to_string())?
         .into();
@@ -170,19 +173,22 @@ pub fn connect_to_vc(
             .map_err(|e| format!("{e:?}"))?,
     );
 
-    output_config.channels = 1;
-
     // shared ring buffer between the UDP-receiving task and the playback callback
-    let (audio_tx, audio_rx) = std::sync::mpsc::channel::<[f32; 1024]>();
+    let (audio_tx, audio_rx) = std::sync::mpsc::channel::<Vec<f32>>();
 
     let output_stream = output_device
         .build_output_stream(
-            output_config,
+            output_config.clone(),
             move |data: &mut [f32], _| {
                 if let Ok(pcm) = audio_rx.try_recv() {
-                    eprintln!("[vc] playing {} samples", pcm.len());
                     for (out, sample) in data.iter_mut().zip(pcm.iter()) {
                         *out = *sample;
+                    }
+
+                    // If CPAL asks for more samples than we received,
+                    // fill the remainder with silence.
+                    if pcm.len() < data.len() {
+                        data[pcm.len()..].fill(0.0);
                     }
                 } else {
                     data.fill(0.0);
@@ -211,14 +217,24 @@ pub fn connect_to_vc(
                 while output_buffer.len() >= 1024 {
                     let input: Vec<f32> = output_buffer.drain(..1024).collect();
 
-                    let mut pcm_out = [0.0f32; 1024];
+                    let output_len =
+                        ((1024.0 * output_config.sample_rate as f32 / 44100.0).ceil()) as usize;
+
+                    let mut pcm_out = vec![0.0f32; output_len];
 
                     if let Err(e) = output_resampler.resample(&input, &mut pcm_out) {
                         eprintln!("[vc] failed to resample output: {e}");
                         continue;
                     }
 
-                    if audio_tx.send(pcm_out).is_err() {
+                    if audio_tx
+                        .send(if output_config.channels > 1 {
+                            stereo_to_mono(&pcm_out)
+                        } else {
+                            pcm_out
+                        })
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -243,4 +259,17 @@ pub fn connect_to_vc(
 pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
     *voice_state.session.lock().unwrap() = None; // dropping stops both cpal streams
     Ok(())
+}
+
+fn stereo_to_mono(stereo_data: &[f32]) -> Vec<f32> {
+    let mut mono_data = Vec::with_capacity(stereo_data.len() / 2);
+
+    for chunk in stereo_data.chunks_exact(2) {
+        let left = chunk[0];
+        let right = chunk[1];
+        let mono_sample = (left + right) / 2.0;
+        mono_data.push(mono_sample);
+    }
+
+    mono_data
 }
