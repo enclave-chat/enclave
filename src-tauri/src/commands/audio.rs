@@ -127,9 +127,14 @@ pub fn connect_to_vc(
                     packet.extend_from_slice(&sample.to_be_bytes());
                 }
 
+                eprintln!(
+                    "[vc] mic captured {} samples ({} bytes)",
+                    pcm.len(),
+                    packet.len()
+                );
                 let _ = input_socket.send(&packet);
             },
-            |err| eprintln!("Input stream error: {err}"),
+            |err| eprintln!("[vc] input stream error: {err}"),
             None,
         )
         .map_err(|e| e.to_string())?;
@@ -148,14 +153,15 @@ pub fn connect_to_vc(
             output_config,
             move |data: &mut [f32], _| {
                 if let Ok(pcm) = audio_rx.try_recv() {
+                    eprintln!("[vc] playing {} samples", pcm.len());
                     for (out, sample) in data.iter_mut().zip(pcm.iter()) {
                         *out = *sample as f32 / i16::MAX as f32;
                     }
                 } else {
-                    data.fill(0.0); // silence if nothing's arrived yet
+                    data.fill(0.0);
                 }
             },
-            |err| eprintln!("Output stream error: {err}"),
+            |err| eprintln!("[vc] output stream error: {err}"),
             None,
         )
         .map_err(|e| e.to_string())?;

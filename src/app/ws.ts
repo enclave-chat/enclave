@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod, ServerMethod } from "./protocol";
 
 /**
@@ -15,6 +16,9 @@ export default class EnclaveWebSocket {
     this.onOpenQueue = new Array();
 
     this.websocket = new WebSocket(hostname);
+    this.websocket.onclose = () => {
+      invoke("disconnect_from_vc");
+    };
     this.websocket.onopen = () => {
       this.onOpenQueue.forEach((fun) => fun());
     };
