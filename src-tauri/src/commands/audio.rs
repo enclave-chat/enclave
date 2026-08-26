@@ -122,16 +122,13 @@ pub fn connect_to_vc(
                     .map(|s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
                     .collect();
 
-                let mut packet = Vec::with_capacity(pcm.len() * 2);
-                for sample in &pcm {
+                let pcm_44k = resample_linear(&pcm, input_config.sample_rate, 44_100);
+
+                let mut packet = Vec::with_capacity(pcm_44k.len() * 2);
+                for sample in &pcm_44k {
                     packet.extend_from_slice(&sample.to_be_bytes());
                 }
 
-                eprintln!(
-                    "[vc] mic captured {} samples ({} bytes)",
-                    pcm.len(),
-                    packet.len()
-                );
                 let _ = input_socket.send(&packet);
             },
             |err| eprintln!("[vc] input stream error: {err}"),
@@ -176,7 +173,16 @@ pub fn connect_to_vc(
                     .chunks_exact(2)
                     .map(|b| i16::from_be_bytes([b[0], b[1]]))
                     .collect();
-                let _ = audio_tx.send(pcm);
+
+                let pcm_out = resample_linear(&pcm, 44_100, output_config.sample_rate);
+
+                match audio_tx.send(pcm_out) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        eprintln!("[vc] audio channel disconnected: {e}");
+                        break;
+                    }
+                }
             }
         }
     });
@@ -198,4 +204,28 @@ pub fn connect_to_vc(
 pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
     *voice_state.session.lock().unwrap() = None; // dropping stops both cpal streams
     Ok(())
+}
+
+fn resample_linear(input: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
+    if input.is_empty() || from_rate == to_rate {
+        return input.to_vec();
+    }
+
+    let output_len = (input.len() as u64 * to_rate as u64 / from_rate as u64) as usize;
+
+    let mut output = Vec::with_capacity(output_len);
+
+    for i in 0..output_len {
+        let position = i as f64 * from_rate as f64 / to_rate as f64;
+
+        let index = position.floor() as usize;
+        let fraction = position - index as f64;
+
+        let a = input[index.min(input.len() - 1)] as f64;
+        let b = input[(index + 1).min(input.len() - 1)] as f64;
+
+        output.push((a + (b - a) * fraction) as i16);
+    }
+
+    output
 }
