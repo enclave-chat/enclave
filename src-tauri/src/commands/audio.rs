@@ -11,7 +11,7 @@ use std::{
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
-    traits::{Consumer, Observer, Producer, Split},
+    traits::{Consumer, Producer, Split},
     HeapRb,
 };
 use tauri::State;
