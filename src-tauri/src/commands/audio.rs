@@ -18,14 +18,14 @@ use tauri::State;
 
 use crate::commands::config::ConfigState;
 
-const PACKET_SAMPLES: usize = 882; // 20ms @ 44.1kHz
+// Standardize to 48kHz (Native for WebAudio and low-latency VoIP)
+const SAMPLE_RATE: u32 = 48000;
+const PACKET_SAMPLES: usize = 960; // 20ms @ 48kHz
 const HEADER_SIZE: usize = 4;
 const MAX_PACKET_SIZE: usize = 4096;
 
-// Jitter buffer settings
-const JITTER_BUFFER_MS: usize = 60; // Cushion size before playback starts
-const PACKET_DURATION_MS: usize = 20;
-const INITIAL_PACKET_CUSHION: usize = JITTER_BUFFER_MS / PACKET_DURATION_MS; // 3 packets
+const JITTER_BUFFER_MS: usize = 60;
+const INITIAL_PACKET_CUSHION: usize = JITTER_BUFFER_MS / 20; // 3 packets
 
 // ============================================================================
 // STATE
@@ -58,7 +58,6 @@ impl Default for VoiceState {
 #[tauri::command]
 pub fn list_input_devices() -> Result<Vec<String>, String> {
     let host = cpal::default_host();
-
     Ok(host
         .input_devices()
         .map_err(|e| e.to_string())?
@@ -69,7 +68,6 @@ pub fn list_input_devices() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn list_output_devices() -> Result<Vec<String>, String> {
     let host = cpal::default_host();
-
     Ok(host
         .output_devices()
         .map_err(|e| e.to_string())?
@@ -86,7 +84,6 @@ pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> 
     if let Some(session) = voice_state.session.lock().unwrap().take() {
         session.shutdown.store(true, Ordering::SeqCst);
     }
-
     Ok(())
 }
 
@@ -112,7 +109,7 @@ pub fn connect_to_vc(
         .connect(&hostname)
         .map_err(|e| format!("Failed to connect UDP socket: {e}"))?;
     socket
-        .set_read_timeout(Some(Duration::from_millis(50)))
+        .set_read_timeout(Some(Duration::from_millis(10)))
         .map_err(|e| e.to_string())?;
     socket
         .send(&pin.to_be_bytes())
@@ -154,47 +151,31 @@ pub fn connect_to_vc(
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // Lock-Free Ring Buffer setup (Hold 100ms max buffer)
-    let rb = HeapRb::<f32>::new(8820);
+    // Lock-Free Ring Buffer setup (19.2k samples ~ 400ms buffer capacity at 48kHz)
+    let rb = HeapRb::<f32>::new(19200);
     let (mut producer, consumer) = rb.split();
 
-    let output_config = build_output_config(&output_device)?;
-    let output_config = Arc::new(Mutex::new(output_config));
-    let needs_output_rebuild = Arc::new(AtomicBool::new(false));
+    let output_config = cpal::StreamConfig {
+        channels: 2,
+        sample_rate: SAMPLE_RATE,
+        buffer_size: cpal::BufferSize::Default,
+    };
 
-    // Consumer moved directly without Mutex wrapping
-    let output_stream = build_output_stream(
-        &output_device,
-        &output_config.lock().unwrap(),
-        consumer,
-        needs_output_rebuild.clone(),
-    )?;
-
+    let output_stream = build_output_stream(&output_device, &output_config, consumer)?;
     output_stream
         .play()
         .map_err(|e| format!("Failed to start output: {e}"))?;
     let output_stream = Arc::new(Mutex::new(output_stream));
 
-    // Setup input stream with stack/pre-allocated buffers
-    let mut input_config: cpal::StreamConfig = input_device
-        .default_input_config()
-        .map_err(|e| e.to_string())?
-        .into();
-    input_config.channels = 1;
+    // Configure Input Stream
+    let input_config = cpal::StreamConfig {
+        channels: 1,
+        sample_rate: SAMPLE_RATE,
+        buffer_size: cpal::BufferSize::Default,
+    };
 
-    let input_sample_rate = input_config.sample_rate;
     let input_socket = socket.clone();
-
-    let mut input_resampler = resampler::ResamplerFft::new(
-        1,
-        input_sample_rate
-            .try_into()
-            .map_err(|e| format!("Invalid input sample rate: {e:?}"))?,
-        resampler::SampleRate::Hz44100,
-    );
-
-    let mut input_buffer = Vec::with_capacity(4096);
-    let mut packet_buffer = Vec::with_capacity(4096);
+    let mut packet_buffer = Vec::with_capacity(PACKET_SAMPLES * 2);
     let mut sequence = 0u32;
     let mut net_packet = vec![0u8; HEADER_SIZE + PACKET_SAMPLES * 2];
 
@@ -202,32 +183,20 @@ pub fn connect_to_vc(
         .build_input_stream(
             input_config,
             move |data: &[f32], _| {
-                input_buffer.extend_from_slice(data);
+                packet_buffer.extend_from_slice(data);
 
-                let input_size = input_resampler.chunk_size_input();
-                let output_size = input_resampler.chunk_size_output();
+                while packet_buffer.len() >= PACKET_SAMPLES {
+                    let samples: Vec<f32> = packet_buffer.drain(..PACKET_SAMPLES).collect();
 
-                while input_buffer.len() >= input_size {
-                    let input_chunk: Vec<f32> = input_buffer.drain(..input_size).collect();
-                    let mut output = vec![0.0; output_size];
-
-                    if input_resampler.resample(&input_chunk, &mut output).is_ok() {
-                        packet_buffer.extend(output);
-
-                        while packet_buffer.len() >= PACKET_SAMPLES {
-                            let samples = packet_buffer.drain(..PACKET_SAMPLES);
-
-                            net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
-                            for (i, sample) in samples.enumerate() {
-                                let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-                                let offset = HEADER_SIZE + i * 2;
-                                net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
-                            }
-
-                            let _ = input_socket.send(&net_packet);
-                            sequence = sequence.wrapping_add(1);
-                        }
+                    net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
+                    for (i, sample) in samples.iter().enumerate() {
+                        let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                        let offset = HEADER_SIZE + i * 2;
+                        net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
                     }
+
+                    let _ = input_socket.send(&net_packet);
+                    sequence = sequence.wrapping_add(1);
                 }
             },
             |err| eprintln!("[vc] input error: {err}"),
@@ -235,49 +204,30 @@ pub fn connect_to_vc(
         )
         .map_err(|e| e.to_string())?;
 
-    // UDP Receiver Thread
+    // UDP Receiver & Jitter Buffer Thread
     {
         let socket = socket.clone();
-        let output_config = output_config.clone();
         let shutdown = shutdown.clone();
 
         thread::spawn(move || {
-            let initial_config = output_config.lock().unwrap().clone();
-            let mut output_resampler = match create_output_resampler(initial_config.sample_rate) {
-                Ok(r) => r,
-                Err(e) => return eprintln!("[vc] output resampler: {e}"),
-            };
-
-            let mut last_sample_rate = initial_config.sample_rate;
             let mut packets: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
             let mut expected: Option<u32> = None;
             let mut is_prebuffering = true;
-
-            let mut resample_buffer = Vec::with_capacity(8192);
+            let mut last_good_frame = vec![0.0f32; PACKET_SAMPLES];
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
 
             while !shutdown.load(Ordering::Relaxed) {
+                // Read incoming packets
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
                     if len > HEADER_SIZE {
-                        let sequence = u32::from_be_bytes(udp_buffer[0..4].try_into().unwrap());
+                        let seq = u32::from_be_bytes(udp_buffer[0..4].try_into().unwrap());
                         let pcm = &udp_buffer[HEADER_SIZE..len];
                         let samples: Vec<f32> = pcm
                             .chunks_exact(2)
                             .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
                             .collect();
 
-                        packets.entry(sequence).or_insert(samples);
-                    }
-                }
-
-                let current_sr = output_config.lock().unwrap().sample_rate;
-                if current_sr != last_sample_rate {
-                    if let Ok(nr) = create_output_resampler(current_sr) {
-                        output_resampler = nr;
-                        last_sample_rate = current_sr;
-                        packets.clear();
-                        expected = None;
-                        is_prebuffering = true;
+                        packets.insert(seq, samples);
                     }
                 }
 
@@ -286,37 +236,45 @@ pub fn connect_to_vc(
                         expected = packets.keys().next().copied();
                         is_prebuffering = false;
                     } else {
-                        thread::sleep(Duration::from_millis(2));
                         continue;
                     }
                 }
 
+                // Drain ordered frames into ring buffer
                 while let Some(seq) = expected {
                     if let Some(samples) = packets.remove(&seq) {
-                        resample_buffer.extend(samples);
+                        // Dynamically match any incoming frame length without crashing
+                        if samples.len() == PACKET_SAMPLES {
+                            last_good_frame.copy_from_slice(&samples);
+                        } else {
+                            // Resize/truncate safely if source length differs
+                            last_good_frame.clear();
+                            last_good_frame.extend(samples.iter().take(PACKET_SAMPLES).copied());
+                            if last_good_frame.len() < PACKET_SAMPLES {
+                                last_good_frame.resize(PACKET_SAMPLES, 0.0);
+                            }
+                        }
+
+                        let _ = producer.push_slice(&samples);
                         expected = Some(seq.wrapping_add(1));
                     } else if packets.keys().any(|&x| x > seq) {
-                        resample_buffer.extend(std::iter::repeat(0.0).take(PACKET_SAMPLES));
+                        // Packet Loss Concealment (PLC): Decay previous packet amplitude instead of absolute zeros
+                        let mut plc_frame = last_good_frame.clone();
+                        for sample in plc_frame.iter_mut() {
+                            *sample *= 0.65; // Quick fade out for missing frame
+                        }
+                        last_good_frame.copy_from_slice(&plc_frame);
+
+                        let _ = producer.push_slice(&plc_frame);
                         expected = Some(seq.wrapping_add(1));
                     } else {
+                        // Out of continuous frames, wait for network
+                        if packets.is_empty() {
+                            is_prebuffering = true;
+                        }
                         break;
                     }
                 }
-
-                let input_size = output_resampler.chunk_size_input();
-                let output_size = output_resampler.chunk_size_output();
-
-                while resample_buffer.len() >= input_size {
-                    let input_chunk: Vec<f32> = resample_buffer.drain(..input_size).collect();
-                    let mut output = vec![0.0; output_size];
-
-                    if output_resampler.resample(&input_chunk, &mut output).is_ok() {
-                        // Push directly without Mutex lock!
-                        let _ = producer.push_slice(&output);
-                    }
-                }
-
-                thread::sleep(Duration::from_millis(2));
             }
         });
     }
@@ -336,60 +294,47 @@ pub fn connect_to_vc(
     Ok(())
 }
 
-fn build_output_config(device: &cpal::Device) -> Result<cpal::StreamConfig, String> {
-    device
-        .default_output_config()
-        .map(Into::into)
-        .map_err(|e| e.to_string())
-}
-
-fn create_output_resampler(
-    sample_rate: cpal::SampleRate,
-) -> Result<resampler::ResamplerFft, String> {
-    let rate = sample_rate
-        .try_into()
-        .map_err(|e| format!("Invalid sample rate: {e:?}"))?;
-
-    Ok(resampler::ResamplerFft::new(
-        1,
-        resampler::SampleRate::Hz44100,
-        rate,
-    ))
-}
+// ============================================================================
+// AUDIO CALLBACK (Pops Avoidance & Degraded Fill)
+// ============================================================================
 
 fn build_output_stream<C>(
     device: &cpal::Device,
     config: &cpal::StreamConfig,
     mut consumer: C,
-    needs_rebuild: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String>
 where
     C: Consumer<Item = f32> + Send + 'static,
 {
     let channels = config.channels as usize;
+    let mut last_sample = 0.0f32;
 
     device
         .build_output_stream(
-            config.clone(),
+            *config,
             move |data: &mut [f32], _| {
                 let mut idx = 0;
                 while idx < data.len() {
                     if let Some(mono_sample) = consumer.try_pop() {
+                        last_sample = mono_sample;
                         for ch in 0..channels {
                             data[idx + ch] = mono_sample;
                         }
                         idx += channels;
                     } else {
-                        data[idx..].fill(0.0);
+                        // Smooth de-zippering / anti-pop decay on buffer underruns
+                        while idx < data.len() {
+                            last_sample *= 0.92; // Rapid smooth fade to silence
+                            for ch in 0..channels {
+                                data[idx + ch] = last_sample;
+                            }
+                            idx += channels;
+                        }
                         break;
                     }
                 }
             },
-            move |err| {
-                eprintln!("[vc] output error: {err}");
-
-                needs_rebuild.store(true, Ordering::SeqCst);
-            },
+            |err| eprintln!("[vc] output error: {err}"),
             None,
         )
         .map_err(|e| e.to_string())
