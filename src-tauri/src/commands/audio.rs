@@ -6,25 +6,24 @@ use std::{
         Arc, Mutex,
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
-    traits::{Consumer, Producer, Split},
+    traits::{Consumer, Observer, Producer, Split},
     HeapRb,
 };
 use tauri::State;
 
 use crate::commands::config::ConfigState;
 
-// Standardize to 48kHz (Native for WebAudio and low-latency VoIP)
 const SAMPLE_RATE: u32 = 48000;
 const PACKET_SAMPLES: usize = 960; // 20ms @ 48kHz
 const HEADER_SIZE: usize = 4;
 const MAX_PACKET_SIZE: usize = 4096;
 
-const INITIAL_PACKET_CUSHION: usize = 5;
+const INITIAL_PACKET_CUSHION: usize = 3; // ~60ms cushion
 
 // ============================================================================
 // STATE
@@ -108,7 +107,7 @@ pub fn connect_to_vc(
         .connect(&hostname)
         .map_err(|e| format!("Failed to connect UDP socket: {e}"))?;
     socket
-        .set_read_timeout(Some(Duration::from_millis(10)))
+        .set_read_timeout(Some(Duration::from_millis(5)))
         .map_err(|e| e.to_string())?;
     socket
         .send(&pin.to_be_bytes())
@@ -151,8 +150,8 @@ pub fn connect_to_vc(
     let shutdown = Arc::new(AtomicBool::new(false));
 
     // Lock-Free Ring Buffer setup (19.2k samples ~ 400ms buffer capacity at 48kHz)
-    let rb = HeapRb::<f32>::new(19200);
-    let (mut producer, consumer) = rb.split();
+    let rb_out = HeapRb::<f32>::new(19200);
+    let (mut producer_out, consumer_out) = rb_out.split();
 
     let output_config = cpal::StreamConfig {
         channels: 2,
@@ -160,35 +159,49 @@ pub fn connect_to_vc(
         buffer_size: cpal::BufferSize::Default,
     };
 
-    let output_stream = build_output_stream(&output_device, &output_config, consumer)?;
+    let output_stream = build_output_stream(&output_device, output_config, consumer_out)?;
     output_stream
         .play()
         .map_err(|e| format!("Failed to start output: {e}"))?;
     let output_stream = Arc::new(Mutex::new(output_stream));
 
-    // Configure Input Stream
+    // Configure Input Stream with dedicated thread ring-buffer
     let input_config = cpal::StreamConfig {
         channels: 1,
         sample_rate: SAMPLE_RATE,
         buffer_size: cpal::BufferSize::Default,
     };
 
-    let input_socket = socket.clone();
-    let mut packet_buffer = Vec::with_capacity(PACKET_SAMPLES * 2);
-    let mut sequence = 0u32;
-    let mut net_packet = vec![0u8; HEADER_SIZE + PACKET_SAMPLES * 2];
+    let rb_in = HeapRb::<f32>::new(19200);
+    let (mut producer_in, mut consumer_in) = rb_in.split();
 
     let input_stream = input_device
         .build_input_stream(
             input_config,
             move |data: &[f32], _| {
-                packet_buffer.extend_from_slice(data);
+                let _ = producer_in.push_slice(data);
+            },
+            |err| eprintln!("[vc] input error: {err}"),
+            None,
+        )
+        .map_err(|e| e.to_string())?;
 
-                while packet_buffer.len() >= PACKET_SAMPLES {
-                    let samples: Vec<f32> = packet_buffer.drain(..PACKET_SAMPLES).collect();
+    // UDP Sender Thread - Pumps exact 20ms frames smoothly
+    {
+        let input_socket = socket.clone();
+        let shutdown = shutdown.clone();
+
+        thread::spawn(move || {
+            let mut sequence = 0u32;
+            let mut net_packet = vec![0u8; HEADER_SIZE + PACKET_SAMPLES * 2];
+            let mut frame_buf = vec![0.0f32; PACKET_SAMPLES];
+
+            while !shutdown.load(Ordering::Relaxed) {
+                if consumer_in.occupied_len() >= PACKET_SAMPLES {
+                    let _ = consumer_in.pop_slice(&mut frame_buf);
 
                     net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
-                    for (i, sample) in samples.iter().enumerate() {
+                    for (i, sample) in frame_buf.iter().enumerate() {
                         let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
                         let offset = HEADER_SIZE + i * 2;
                         net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
@@ -196,14 +209,14 @@ pub fn connect_to_vc(
 
                     let _ = input_socket.send(&net_packet);
                     sequence = sequence.wrapping_add(1);
+                } else {
+                    thread::sleep(Duration::from_millis(2));
                 }
-            },
-            |err| eprintln!("[vc] input error: {err}"),
-            None,
-        )
-        .map_err(|e| e.to_string())?;
+            }
+        });
+    }
 
-    // UDP Receiver & Jitter Buffer Thread
+    // UDP Receiver Thread - Paced Jitter Buffer
     {
         let socket = socket.clone();
         let shutdown = shutdown.clone();
@@ -214,9 +227,10 @@ pub fn connect_to_vc(
             let mut is_prebuffering = true;
             let mut last_good_frame = vec![0.0f32; PACKET_SAMPLES];
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
+            let mut next_frame_time = Instant::now();
 
             while !shutdown.load(Ordering::Relaxed) {
-                // Read incoming packets
+                // Non-blocking UDP receive
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
                     if len > HEADER_SIZE {
                         let seq = u32::from_be_bytes(udp_buffer[0..4].try_into().unwrap());
@@ -234,46 +248,48 @@ pub fn connect_to_vc(
                     if packets.len() >= INITIAL_PACKET_CUSHION {
                         expected = packets.keys().next().copied();
                         is_prebuffering = false;
+                        next_frame_time = Instant::now();
                     } else {
+                        thread::sleep(Duration::from_millis(1));
                         continue;
                     }
                 }
 
-                // Drain ordered frames into ring buffer
-                while let Some(seq) = expected {
-                    if let Some(samples) = packets.remove(&seq) {
-                        // Dynamically match any incoming frame length without crashing
-                        if samples.len() == PACKET_SAMPLES {
-                            last_good_frame.copy_from_slice(&samples);
+                // Paced playback frame-by-frame (20ms target interval)
+                if Instant::now() >= next_frame_time {
+                    if let Some(seq) = expected {
+                        if let Some(samples) = packets.remove(&seq) {
+                            if samples.len() == PACKET_SAMPLES {
+                                last_good_frame.copy_from_slice(&samples);
+                            } else {
+                                last_good_frame.clear();
+                                last_good_frame
+                                    .extend(samples.iter().take(PACKET_SAMPLES).copied());
+                                if last_good_frame.len() < PACKET_SAMPLES {
+                                    last_good_frame.resize(PACKET_SAMPLES, 0.0);
+                                }
+                            }
+
+                            let _ = producer_out.push_slice(&last_good_frame);
+                            expected = Some(seq.wrapping_add(1));
+                        } else if packets.keys().any(|&x| x > seq) {
+                            // PLC (Packet Loss Concealment)
+                            for sample in last_good_frame.iter_mut() {
+                                *sample *= 0.65;
+                            }
+                            let _ = producer_out.push_slice(&last_good_frame);
+                            expected = Some(seq.wrapping_add(1));
                         } else {
-                            // Resize/truncate safely if source length differs
-                            last_good_frame.clear();
-                            last_good_frame.extend(samples.iter().take(PACKET_SAMPLES).copied());
-                            if last_good_frame.len() < PACKET_SAMPLES {
-                                last_good_frame.resize(PACKET_SAMPLES, 0.0);
+                            // Re-buffer if packet stream dropped
+                            if packets.is_empty() {
+                                is_prebuffering = true;
                             }
                         }
-
-                        let _ = producer.push_slice(&samples);
-                        expected = Some(seq.wrapping_add(1));
-                    } else if packets.keys().any(|&x| x > seq) {
-                        // Packet Loss Concealment (PLC): Decay previous packet amplitude instead of absolute zeros
-                        let mut plc_frame = last_good_frame.clone();
-                        for sample in plc_frame.iter_mut() {
-                            *sample *= 0.65; // Quick fade out for missing frame
-                        }
-                        last_good_frame.copy_from_slice(&plc_frame);
-
-                        let _ = producer.push_slice(&plc_frame);
-                        expected = Some(seq.wrapping_add(1));
-                    } else {
-                        // Out of continuous frames, wait for network
-                        if packets.is_empty() {
-                            is_prebuffering = true;
-                        }
-                        break;
                     }
+                    next_frame_time += Duration::from_millis(20);
                 }
+
+                thread::sleep(Duration::from_millis(1));
             }
         });
     }
@@ -294,12 +310,12 @@ pub fn connect_to_vc(
 }
 
 // ============================================================================
-// AUDIO CALLBACK (Pops Avoidance & Degraded Fill)
+// AUDIO CALLBACK
 // ============================================================================
 
 fn build_output_stream<C>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     mut consumer: C,
 ) -> Result<cpal::Stream, String>
 where
@@ -310,7 +326,7 @@ where
 
     device
         .build_output_stream(
-            *config,
+            config,
             move |data: &mut [f32], _| {
                 let mut idx = 0;
                 while idx < data.len() {
@@ -321,9 +337,9 @@ where
                         }
                         idx += channels;
                     } else {
-                        // Smooth de-zippering / anti-pop decay on buffer underruns
+                        // Smooth fade out to avoid clicks on underruns
                         while idx < data.len() {
-                            last_sample *= 0.92; // Rapid smooth fade to silence
+                            last_sample *= 0.92;
                             for ch in 0..channels {
                                 data[idx + ch] = last_sample;
                             }
