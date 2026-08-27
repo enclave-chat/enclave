@@ -113,12 +113,4 @@ export default class EnclaveServer {
 
     this.websocket?.send({ method: "GetUsers", pubkeys: filteredPubkeys });
   }
-
-  public voiceChatSpeaker(pubkey: string) {
-    clearTimeout(this.voiceChatSpeakers[pubkey]);
-
-    this.voiceChatSpeakers[pubkey] = setTimeout(() => {
-      delete this.voiceChatSpeakers[pubkey];
-    }, 1000);
-  }
 }

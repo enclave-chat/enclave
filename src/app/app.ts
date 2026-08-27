@@ -216,10 +216,17 @@ export default class Enclave<P = Page> {
           server.voiceChatUsers[msg.channel_id] = [];
 
         server.voiceChatUsers[msg.channel_id].push(msg.pubkey);
+        this.server?.getUsers([msg.pubkey]);
         return;
 
       case "Speaking":
-        server.voiceChatSpeaker(msg.pubkey);
+        clearTimeout(server.voiceChatSpeakers[msg.pubkey]);
+
+        server.voiceChatSpeakers[msg.pubkey] = setTimeout(() => {
+          delete server.voiceChatSpeakers[msg.pubkey];
+          this.forceRender();
+        }, 800);
+        this.forceRender();
         return;
     }
   }
