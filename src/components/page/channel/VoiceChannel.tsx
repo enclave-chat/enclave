@@ -40,6 +40,9 @@ export default function VoiceChannel({
       <header className="px-3 pt-3 pb-3 text-sm text-muted-foreground border-b border-b-border">
         <h2>{channel.name}</h2>
       </header>
+      <div className="w-full h-full flex">
+        {JSON.stringify(appRef.current?.server?.voiceChatSpeakers)}
+      </div>
     </div>
   );
 }

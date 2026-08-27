@@ -25,6 +25,13 @@ const MAX_PACKET_SIZE: usize = 4096;
 
 const INITIAL_PACKET_CUSHION: usize = 3; // ~60ms cushion
 
+// --- Voice Activity Detection (VAD) Settings ---
+/// RMS energy threshold to classify audio as speech (Range: 0.0 to 1.0).
+/// 0.01 ≈ -40 dBFS. Adjust upward if room noise is triggering transmission.
+const VAD_THRESHOLD: f32 = 0.01;
+/// Number of 20ms frames to keep transmitting after falling below threshold (~200ms hangover)
+const VAD_HANGOVER_FRAMES: usize = 10;
+
 // ============================================================================
 // STATE & TYPES
 // ============================================================================
@@ -261,7 +268,6 @@ pub fn connect_to_vc(
     let mut producer_out = producer_out; // Handed to receiver thread
     let shared_consumer_out = Arc::new(Mutex::new(consumer_out));
 
-    // Replace hardcoded output_config:
     let output_config = output_device
         .default_output_config()
         .map_err(|e| format!("Failed to get default output config: {e}"))?
@@ -301,7 +307,7 @@ pub fn connect_to_vc(
         )
         .map_err(|e| e.to_string())?;
 
-    // UDP Sender Thread
+    // UDP Sender Thread (With Voice Activity Detection)
     {
         let input_socket = socket.clone();
         let shutdown = shutdown.clone();
@@ -310,20 +316,39 @@ pub fn connect_to_vc(
             let mut sequence = 0u32;
             let mut net_packet = vec![0u8; HEADER_SIZE + PACKET_SAMPLES * 2];
             let mut frame_buf = vec![0.0f32; PACKET_SAMPLES];
+            let mut hangover_counter = 0;
 
             while !shutdown.load(Ordering::Relaxed) {
                 if consumer_in.occupied_len() >= PACKET_SAMPLES {
                     let _ = consumer_in.pop_slice(&mut frame_buf);
 
-                    net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
-                    for (i, sample) in frame_buf.iter().enumerate() {
-                        let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-                        let offset = HEADER_SIZE + i * 2;
-                        net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
-                    }
+                    // 1. Calculate RMS energy of current audio frame
+                    let sum_squares: f32 = frame_buf.iter().map(|&s| s * s).sum();
+                    let rms = (sum_squares / PACKET_SAMPLES as f32).sqrt();
 
-                    let _ = input_socket.send(&net_packet);
-                    sequence = sequence.wrapping_add(1);
+                    // 2. Check threshold and manage hangover counter
+                    let is_speaking = if rms >= VAD_THRESHOLD {
+                        hangover_counter = VAD_HANGOVER_FRAMES;
+                        true
+                    } else if hangover_counter > 0 {
+                        hangover_counter -= 1;
+                        true
+                    } else {
+                        false
+                    };
+
+                    // 3. Only encode and transmit if VAD is active
+                    if is_speaking {
+                        net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
+                        for (i, sample) in frame_buf.iter().enumerate() {
+                            let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
+                            let offset = HEADER_SIZE + i * 2;
+                            net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
+                        }
+
+                        let _ = input_socket.send(&net_packet);
+                        sequence = sequence.wrapping_add(1);
+                    }
                 } else {
                     thread::sleep(Duration::from_millis(2));
                 }
