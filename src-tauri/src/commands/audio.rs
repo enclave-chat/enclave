@@ -26,10 +26,7 @@ const MAX_PACKET_SIZE: usize = 4096;
 const INITIAL_PACKET_CUSHION: usize = 3; // ~60ms cushion
 
 // --- Voice Activity Detection (VAD) Settings ---
-/// RMS energy threshold to classify audio as speech (Range: 0.0 to 1.0).
-/// 0.01 ≈ -40 dBFS. Adjust upward if room noise is triggering transmission.
 const VAD_THRESHOLD: f32 = 0.01;
-/// Number of 20ms frames to keep transmitting after falling below threshold (~200ms hangover)
 const VAD_HANGOVER_FRAMES: usize = 10;
 
 // ============================================================================
@@ -39,7 +36,13 @@ const VAD_HANGOVER_FRAMES: usize = 10;
 type AudioProducer = Arc<Mutex<CachingProd<Arc<SharedRb<Heap<f32>>>>>>;
 type AudioConsumer = Arc<Mutex<CachingCons<Arc<SharedRb<Heap<f32>>>>>>;
 
+#[derive(Clone, Default)]
 pub struct VoiceState {
+    pub inner: Arc<VoiceStateInner>,
+}
+
+#[derive(Default)]
+pub struct VoiceStateInner {
     pub session: Mutex<Option<VoiceSession>>,
 }
 
@@ -50,18 +53,19 @@ pub struct VoiceSession {
     pub pin: u64,
     pub shutdown: Arc<AtomicBool>,
 
-    // Tracked settings for diffing config changes
     pub current_input_device: Option<String>,
     pub current_output_device: Option<String>,
 
-    // Shared ringbuffer handles for runtime hot-swapping
     pub producer_in: AudioProducer,
     pub consumer_out: AudioConsumer,
 }
 
 impl VoiceSession {
-    /// Re-binds the input stream (microphone) without disconnecting the UDP thread
-    pub fn update_input_device(&mut self, device_name: Option<String>) -> Result<(), String> {
+    pub fn update_input_device(
+        &mut self,
+        device_name: Option<String>,
+        state_inner: Arc<VoiceStateInner>,
+    ) -> Result<(), String> {
         let host = cpal::default_host();
         let device = match &device_name {
             Some(name) => host
@@ -85,6 +89,8 @@ impl VoiceSession {
             .config();
 
         let producer = Arc::clone(&self.producer_in);
+        let inner_clone = Arc::clone(&state_inner);
+
         let new_stream = device
             .build_input_stream(
                 input_config,
@@ -93,7 +99,19 @@ impl VoiceSession {
                         let _ = prod.push_slice(data);
                     }
                 },
-                |err| eprintln!("[vc] input error: {err}"),
+                move |err| {
+                    eprintln!("[vc] Input error: {err}. Attempting input stream recovery...");
+                    if let Ok(mut lock) = inner_clone.session.lock() {
+                        if let Some(session) = lock.as_mut() {
+                            let target_device = session.current_input_device.clone();
+                            if let Err(e) =
+                                session.update_input_device(target_device, Arc::clone(&inner_clone))
+                            {
+                                eprintln!("[vc] Input recovery failed: {e}");
+                            }
+                        }
+                    }
+                },
                 None,
             )
             .map_err(|e| e.to_string())?;
@@ -102,14 +120,16 @@ impl VoiceSession {
             .play()
             .map_err(|e| format!("Failed to play input stream: {e}"))?;
 
-        // Dropping old stream stops capturing audio hardware
         self.input_stream = new_stream;
         self.current_input_device = device_name;
         Ok(())
     }
 
-    /// Re-binds the output stream (speakers/headphones) without interrupting UDP reception
-    pub fn update_output_device(&mut self, device_name: Option<String>) -> Result<(), String> {
+    pub fn update_output_device(
+        &mut self,
+        device_name: Option<String>,
+        state_inner: Arc<VoiceStateInner>,
+    ) -> Result<(), String> {
         let host = cpal::default_host();
         let device = match &device_name {
             Some(name) => host
@@ -133,7 +153,7 @@ impl VoiceSession {
             .config();
 
         let consumer = Arc::clone(&self.consumer_out);
-        let new_stream = build_output_stream(&device, output_config, consumer)?;
+        let new_stream = build_output_stream(&device, output_config, consumer, state_inner)?;
         new_stream
             .play()
             .map_err(|e| format!("Failed to play output stream: {e}"))?;
@@ -144,14 +164,6 @@ impl VoiceSession {
 
         self.current_output_device = device_name;
         Ok(())
-    }
-}
-
-impl Default for VoiceState {
-    fn default() -> Self {
-        Self {
-            session: Mutex::new(None),
-        }
     }
 }
 
@@ -184,8 +196,12 @@ pub fn list_output_devices() -> Result<Vec<String>, String> {
 // ============================================================================
 
 #[tauri::command]
-pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
-    let mut lock = voice_state.session.lock().map_err(|e| e.to_string())?;
+pub fn disconnect_from_vc(voice_state: State<'_, VoiceState>) -> Result<(), String> {
+    let mut lock = voice_state
+        .inner
+        .session
+        .lock()
+        .map_err(|e| e.to_string())?;
 
     if let Some(session) = lock.take() {
         session.shutdown.store(true, Ordering::SeqCst);
@@ -207,12 +223,13 @@ pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> 
 pub fn connect_to_vc(
     hostname: String,
     pin: u64,
-    config_state: State<ConfigState>,
-    voice_state: State<VoiceState>,
+    config_state: State<'_, ConfigState>,
+    voice_state: State<'_, VoiceState>,
 ) -> Result<(), String> {
     disconnect_from_vc(voice_state.clone())?;
 
     let config = config_state.0.lock().unwrap().clone();
+    let state_inner = Arc::clone(&voice_state.inner);
 
     let socket = Arc::new(
         UdpSocket::bind("0.0.0.0:0").map_err(|e| format!("Failed to bind UDP socket: {e}"))?,
@@ -266,7 +283,7 @@ pub fn connect_to_vc(
     // Output Ring Buffer setup
     let rb_out = HeapRb::<f32>::new(19200);
     let (producer_out, consumer_out) = rb_out.split();
-    let mut producer_out = producer_out; // Handed to receiver thread
+    let mut producer_out = producer_out;
     let shared_consumer_out = Arc::new(Mutex::new(consumer_out));
 
     let output_config = output_device
@@ -278,6 +295,7 @@ pub fn connect_to_vc(
         &output_device,
         output_config,
         Arc::clone(&shared_consumer_out),
+        Arc::clone(&state_inner),
     )?;
     output_stream
         .play()
@@ -295,6 +313,8 @@ pub fn connect_to_vc(
         .config();
 
     let cb_producer = Arc::clone(&shared_producer_in);
+    let inner_input_err = Arc::clone(&state_inner);
+
     let input_stream = input_device
         .build_input_stream(
             input_config,
@@ -303,12 +323,24 @@ pub fn connect_to_vc(
                     let _ = prod.push_slice(data);
                 }
             },
-            |err| eprintln!("[vc] input error: {err}"),
+            move |err| {
+                eprintln!("[vc] Input error: {err}. Attempting input stream recovery...");
+                if let Ok(mut lock) = inner_input_err.session.lock() {
+                    if let Some(session) = lock.as_mut() {
+                        let target_device = session.current_input_device.clone();
+                        if let Err(e) =
+                            session.update_input_device(target_device, Arc::clone(&inner_input_err))
+                        {
+                            eprintln!("[vc] Input recovery failed: {e}");
+                        }
+                    }
+                }
+            },
             None,
         )
         .map_err(|e| e.to_string())?;
 
-    // UDP Sender Thread (With Voice Activity Detection)
+    // UDP Sender Thread
     {
         let input_socket = socket.clone();
         let shutdown = shutdown.clone();
@@ -323,11 +355,9 @@ pub fn connect_to_vc(
                 if consumer_in.occupied_len() >= PACKET_SAMPLES {
                     let _ = consumer_in.pop_slice(&mut frame_buf);
 
-                    // 1. Calculate RMS energy of current audio frame
                     let sum_squares: f32 = frame_buf.iter().map(|&s| s * s).sum();
                     let rms = (sum_squares / PACKET_SAMPLES as f32).sqrt();
 
-                    // 2. Check threshold and manage hangover counter
                     let is_speaking = if rms >= VAD_THRESHOLD {
                         hangover_counter = VAD_HANGOVER_FRAMES;
                         true
@@ -338,7 +368,6 @@ pub fn connect_to_vc(
                         false
                     };
 
-                    // 3. Only encode and transmit if VAD is active
                     if is_speaking {
                         net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
                         for (i, sample) in frame_buf.iter().enumerate() {
@@ -433,7 +462,7 @@ pub fn connect_to_vc(
         .play()
         .map_err(|e| format!("Failed to start input: {e}"))?;
 
-    *voice_state.session.lock().unwrap() = Some(VoiceSession {
+    *state_inner.session.lock().unwrap() = Some(VoiceSession {
         input_stream,
         output_stream,
         socket,
@@ -456,9 +485,11 @@ fn build_output_stream(
     device: &cpal::Device,
     config: cpal::StreamConfig,
     consumer: AudioConsumer,
+    state_inner: Arc<VoiceStateInner>,
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
     let mut last_sample = 0.0f32;
+    let inner_output_err = Arc::clone(&state_inner);
 
     device
         .build_output_stream(
@@ -487,7 +518,19 @@ fn build_output_stream(
                     }
                 }
             },
-            |err| eprintln!("[vc] output error: {err}"),
+            move |err| {
+                eprintln!("[vc] Output error: {err}. Attempting output stream recovery...");
+                if let Ok(mut lock) = inner_output_err.session.lock() {
+                    if let Some(session) = lock.as_mut() {
+                        let target_device = session.current_output_device.clone();
+                        if let Err(e) = session
+                            .update_output_device(target_device, Arc::clone(&inner_output_err))
+                        {
+                            eprintln!("[vc] Output recovery failed: {e}");
+                        }
+                    }
+                }
+            },
             None,
         )
         .map_err(|e| e.to_string())
@@ -502,7 +545,6 @@ impl Drop for VoiceSession {
             let _ = output.pause();
         }
 
-        // Output hardware stream handle clean-up
         eprintln!("[vc] VoiceSession dropped and audio streams paused.");
     }
 }
