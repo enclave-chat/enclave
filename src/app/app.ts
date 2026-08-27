@@ -8,6 +8,7 @@ import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
 import { Page } from "@/components/page/PageView";
 import { ClientMethod } from "./protocol";
+import { Config, getConfig } from "@/lib/config";
 
 ed.hashes.sha512 = sha512;
 
@@ -31,6 +32,7 @@ export default class Enclave<P = Page> {
   public isSettingsOpen: boolean;
   public forceRender: () => void;
   public page?: P;
+  public config?: Config;
 
   public constructor() {
     this.serverList = {};
@@ -41,6 +43,7 @@ export default class Enclave<P = Page> {
   public async init() {
     this.serverList = await getServerList();
     this.accounts = await getAccounts();
+    this.config = await getConfig();
   }
 
   public getAccount(): Account | null {

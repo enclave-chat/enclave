@@ -4,6 +4,8 @@ use std::fs;
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
+use crate::commands::audio::VoiceState;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -42,8 +44,33 @@ fn config_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
 }
 
 #[tauri::command]
-pub fn update_config(state: State<ConfigState>, config: Config) -> Result<(), String> {
-    *state.0.lock().unwrap() = config;
+pub fn update_config(
+    state: State<ConfigState>,
+    voice_state: State<'_, VoiceState>,
+    mut config: Config,
+) -> Result<(), String> {
+    let mut state_lock = state.0.lock().unwrap();
+
+    std::mem::swap(&mut *state_lock, &mut config);
+
+    let Some(sesh) = &mut *voice_state.inner.session.lock().unwrap() else {
+        return Ok(());
+    };
+
+    if state_lock.input_device_name != config.input_device_name {
+        sesh.update_input_device(
+            state_lock.input_device_name.clone(),
+            voice_state.inner.clone(),
+        )?;
+    }
+
+    if state_lock.output_device_name != config.output_device_name {
+        sesh.update_output_device(
+            state_lock.output_device_name.clone(),
+            voice_state.inner.clone(),
+        )?;
+    }
+
     Ok(())
 }
 
