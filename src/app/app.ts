@@ -210,6 +210,17 @@ export default class Enclave<P = Page> {
       case "JoinVoice":
         server.voiceJoin && server.voiceJoin(msg.pin, msg.channel_id);
         return;
+
+      case "UserJoinedVoice":
+        if (!server.voiceChatUsers[msg.channel_id])
+          server.voiceChatUsers[msg.channel_id] = [];
+
+        server.voiceChatUsers[msg.channel_id].push(msg.pubkey);
+        return;
+
+      case "Speaking":
+        server.voiceChatSpeaker(msg.pubkey);
+        return;
     }
   }
 }

@@ -29,15 +29,21 @@ export default class EnclaveServer {
   public isSecure: boolean;
   public websocket?: EnclaveWebSocket;
   public meta?: ServerMeta;
+
   public messages: Record<string, Record<string, StoredMessage>>;
   public users: Record<string, ClientMeta | null>;
+
   public voiceJoin?: (pin: number, channelId: string) => void;
+  public voiceChatUsers: Record<string, string[]>;
+  public voiceChatSpeakers: Record<string, NodeJS.Timeout>;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;
     this.isSecure = isSecure;
     this.messages = {};
     this.users = {};
+    this.voiceChatUsers = {};
+    this.voiceChatSpeakers = {};
   }
 
   public disconnect() {
@@ -106,5 +112,13 @@ export default class EnclaveServer {
     });
 
     this.websocket?.send({ method: "GetUsers", pubkeys: filteredPubkeys });
+  }
+
+  public voiceChatSpeaker(pubkey: string) {
+    clearTimeout(this.voiceChatSpeakers[pubkey]);
+
+    this.voiceChatSpeakers[pubkey] = setTimeout(() => {
+      delete this.voiceChatSpeakers[pubkey];
+    }, 1000);
   }
 }

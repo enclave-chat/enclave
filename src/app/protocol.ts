@@ -33,7 +33,16 @@ export type ClientMethod =
   | {
       method: "JoinVoice";
       channel_id: string;
-      pin: number;
+      pin: bigint;
+    }
+  | {
+      method: "UserJoinedVoice";
+      channel_id: string;
+      pubkey: string;
+    }
+  | {
+      method: "Speaking";
+      pubkey: string;
     };
 
 export type ServerMethod =

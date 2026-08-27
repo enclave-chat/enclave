@@ -11,14 +11,14 @@ use std::{
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
+    storage::Heap,
     traits::{Consumer, Observer, Producer, Split},
-    HeapRb,
+    CachingCons, CachingProd, HeapRb, SharedRb,
 };
 use tauri::State;
 
 use crate::commands::config::ConfigState;
 
-const SAMPLE_RATE: u32 = 48000;
 const PACKET_SAMPLES: usize = 960; // 20ms @ 48kHz
 const HEADER_SIZE: usize = 4;
 const MAX_PACKET_SIZE: usize = 4096;
@@ -26,8 +26,11 @@ const MAX_PACKET_SIZE: usize = 4096;
 const INITIAL_PACKET_CUSHION: usize = 3; // ~60ms cushion
 
 // ============================================================================
-// STATE
+// STATE & TYPES
 // ============================================================================
+
+type AudioProducer = Arc<Mutex<CachingProd<Arc<SharedRb<Heap<f32>>>>>>;
+type AudioConsumer = Arc<Mutex<CachingCons<Arc<SharedRb<Heap<f32>>>>>>;
 
 pub struct VoiceState {
     pub session: Mutex<Option<VoiceSession>>,
@@ -39,6 +42,102 @@ pub struct VoiceSession {
     pub socket: Arc<UdpSocket>,
     pub pin: u64,
     pub shutdown: Arc<AtomicBool>,
+
+    // Tracked settings for diffing config changes
+    pub current_input_device: Option<String>,
+    pub current_output_device: Option<String>,
+
+    // Shared ringbuffer handles for runtime hot-swapping
+    pub producer_in: AudioProducer,
+    pub consumer_out: AudioConsumer,
+}
+
+impl VoiceSession {
+    /// Re-binds the input stream (microphone) without disconnecting the UDP thread
+    pub fn update_input_device(&mut self, device_name: Option<String>) -> Result<(), String> {
+        let host = cpal::default_host();
+        let device = match &device_name {
+            Some(name) => host
+                .input_devices()
+                .map_err(|e| e.to_string())?
+                .find(|d| {
+                    d.description()
+                        .ok()
+                        .map(|x| x.name() == *name)
+                        .unwrap_or(false)
+                })
+                .ok_or_else(|| format!("Input device '{name}' not found"))?,
+            None => host
+                .default_input_device()
+                .ok_or("No default input device")?,
+        };
+
+        let input_config = device
+            .default_input_config()
+            .map_err(|e| format!("Failed to get default input config: {e}"))?
+            .config();
+
+        let producer = Arc::clone(&self.producer_in);
+        let new_stream = device
+            .build_input_stream(
+                input_config,
+                move |data: &[f32], _| {
+                    if let Ok(mut prod) = producer.lock() {
+                        let _ = prod.push_slice(data);
+                    }
+                },
+                |err| eprintln!("[vc] input error: {err}"),
+                None,
+            )
+            .map_err(|e| e.to_string())?;
+
+        new_stream
+            .play()
+            .map_err(|e| format!("Failed to play input stream: {e}"))?;
+
+        // Dropping old stream stops capturing audio hardware
+        self.input_stream = new_stream;
+        self.current_input_device = device_name;
+        Ok(())
+    }
+
+    /// Re-binds the output stream (speakers/headphones) without interrupting UDP reception
+    pub fn update_output_device(&mut self, device_name: Option<String>) -> Result<(), String> {
+        let host = cpal::default_host();
+        let device = match &device_name {
+            Some(name) => host
+                .output_devices()
+                .map_err(|e| e.to_string())?
+                .find(|d| {
+                    d.description()
+                        .ok()
+                        .map(|x| x.name() == *name)
+                        .unwrap_or(false)
+                })
+                .ok_or_else(|| format!("Output device '{name}' not found"))?,
+            None => host
+                .default_output_device()
+                .ok_or("No default output device")?,
+        };
+
+        let output_config = device
+            .default_output_config()
+            .map_err(|e| format!("Failed to get default output config: {e}"))?
+            .config();
+
+        let consumer = Arc::clone(&self.consumer_out);
+        let new_stream = build_output_stream(&device, output_config, consumer)?;
+        new_stream
+            .play()
+            .map_err(|e| format!("Failed to play output stream: {e}"))?;
+
+        if let Ok(mut active_stream) = self.output_stream.lock() {
+            *active_stream = new_stream;
+        }
+
+        self.current_output_device = device_name;
+        Ok(())
+    }
 }
 
 impl Default for VoiceState {
@@ -74,13 +173,20 @@ pub fn list_output_devices() -> Result<Vec<String>, String> {
 }
 
 // ============================================================================
-// DISCONNECT
+// CONFIG UPDATES & DISCONNECT
 // ============================================================================
 
 #[tauri::command]
 pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
     if let Some(session) = voice_state.session.lock().unwrap().take() {
+        // Signal shutdown atomic to terminate sender and receiver loops
         session.shutdown.store(true, Ordering::SeqCst);
+
+        // Pause CPAL hardware streams explicitly to flush playback drivers immediately
+        let _ = session.input_stream.pause();
+        if let Ok(output) = session.output_stream.lock() {
+            let _ = output.pause();
+        }
     }
     Ok(())
 }
@@ -149,44 +255,53 @@ pub fn connect_to_vc(
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // Lock-Free Ring Buffer setup (19.2k samples ~ 400ms buffer capacity at 48kHz)
+    // Output Ring Buffer setup
     let rb_out = HeapRb::<f32>::new(19200);
-    let (mut producer_out, consumer_out) = rb_out.split();
+    let (producer_out, consumer_out) = rb_out.split();
+    let mut producer_out = producer_out; // Handed to receiver thread
+    let shared_consumer_out = Arc::new(Mutex::new(consumer_out));
 
-    let output_config = cpal::StreamConfig {
-        channels: 2,
-        sample_rate: SAMPLE_RATE,
-        buffer_size: cpal::BufferSize::Default,
-    };
+    // Replace hardcoded output_config:
+    let output_config = output_device
+        .default_output_config()
+        .map_err(|e| format!("Failed to get default output config: {e}"))?
+        .config();
 
-    let output_stream = build_output_stream(&output_device, output_config, consumer_out)?;
+    let output_stream = build_output_stream(
+        &output_device,
+        output_config,
+        Arc::clone(&shared_consumer_out),
+    )?;
     output_stream
         .play()
         .map_err(|e| format!("Failed to start output: {e}"))?;
     let output_stream = Arc::new(Mutex::new(output_stream));
 
-    // Configure Input Stream with dedicated thread ring-buffer
-    let input_config = cpal::StreamConfig {
-        channels: 1,
-        sample_rate: SAMPLE_RATE,
-        buffer_size: cpal::BufferSize::Default,
-    };
-
+    // Input Ring Buffer setup
     let rb_in = HeapRb::<f32>::new(19200);
-    let (mut producer_in, mut consumer_in) = rb_in.split();
+    let (producer_in, mut consumer_in) = rb_in.split();
+    let shared_producer_in = Arc::new(Mutex::new(producer_in));
 
+    let input_config = input_device
+        .default_input_config()
+        .map_err(|e| format!("Failed to get default input config: {e}"))?
+        .config();
+
+    let cb_producer = Arc::clone(&shared_producer_in);
     let input_stream = input_device
         .build_input_stream(
             input_config,
             move |data: &[f32], _| {
-                let _ = producer_in.push_slice(data);
+                if let Ok(mut prod) = cb_producer.lock() {
+                    let _ = prod.push_slice(data);
+                }
             },
             |err| eprintln!("[vc] input error: {err}"),
             None,
         )
         .map_err(|e| e.to_string())?;
 
-    // UDP Sender Thread - Pumps exact 20ms frames smoothly
+    // UDP Sender Thread
     {
         let input_socket = socket.clone();
         let shutdown = shutdown.clone();
@@ -216,7 +331,7 @@ pub fn connect_to_vc(
         });
     }
 
-    // UDP Receiver Thread - Paced Jitter Buffer
+    // UDP Receiver Thread
     {
         let socket = socket.clone();
         let shutdown = shutdown.clone();
@@ -230,7 +345,6 @@ pub fn connect_to_vc(
             let mut next_frame_time = Instant::now();
 
             while !shutdown.load(Ordering::Relaxed) {
-                // Non-blocking UDP receive
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
                     if len > HEADER_SIZE {
                         let seq = u32::from_be_bytes(udp_buffer[0..4].try_into().unwrap());
@@ -255,7 +369,6 @@ pub fn connect_to_vc(
                     }
                 }
 
-                // Paced playback frame-by-frame (20ms target interval)
                 if Instant::now() >= next_frame_time {
                     if let Some(seq) = expected {
                         if let Some(samples) = packets.remove(&seq) {
@@ -273,17 +386,13 @@ pub fn connect_to_vc(
                             let _ = producer_out.push_slice(&last_good_frame);
                             expected = Some(seq.wrapping_add(1));
                         } else if packets.keys().any(|&x| x > seq) {
-                            // PLC (Packet Loss Concealment)
                             for sample in last_good_frame.iter_mut() {
                                 *sample *= 0.65;
                             }
                             let _ = producer_out.push_slice(&last_good_frame);
                             expected = Some(seq.wrapping_add(1));
-                        } else {
-                            // Re-buffer if packet stream dropped
-                            if packets.is_empty() {
-                                is_prebuffering = true;
-                            }
+                        } else if packets.is_empty() {
+                            is_prebuffering = true;
                         }
                     }
                     next_frame_time += Duration::from_millis(20);
@@ -304,6 +413,10 @@ pub fn connect_to_vc(
         socket,
         pin,
         shutdown,
+        current_input_device: config.input_device_name,
+        current_output_device: config.output_device_name,
+        producer_in: shared_producer_in,
+        consumer_out: shared_consumer_out,
     });
 
     Ok(())
@@ -313,14 +426,11 @@ pub fn connect_to_vc(
 // AUDIO CALLBACK
 // ============================================================================
 
-fn build_output_stream<C>(
+fn build_output_stream(
     device: &cpal::Device,
     config: cpal::StreamConfig,
-    mut consumer: C,
-) -> Result<cpal::Stream, String>
-where
-    C: Consumer<Item = f32> + Send + 'static,
-{
+    consumer: AudioConsumer,
+) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
     let mut last_sample = 0.0f32;
 
@@ -329,15 +439,17 @@ where
             config,
             move |data: &mut [f32], _| {
                 let mut idx = 0;
+                let mut cons_guard = consumer.lock().ok();
+
                 while idx < data.len() {
-                    if let Some(mono_sample) = consumer.try_pop() {
+                    let sample = cons_guard.as_mut().and_then(|c| c.try_pop());
+                    if let Some(mono_sample) = sample {
                         last_sample = mono_sample;
                         for ch in 0..channels {
                             data[idx + ch] = mono_sample;
                         }
                         idx += channels;
                     } else {
-                        // Smooth fade out to avoid clicks on underruns
                         while idx < data.len() {
                             last_sample *= 0.92;
                             for ch in 0..channels {
