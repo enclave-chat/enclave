@@ -41,6 +41,11 @@ export type ClientMethod =
       pubkey: string;
     }
   | {
+      method: "UserLeftVoice";
+      channel_id: string;
+      pubkey: string;
+    }
+  | {
       method: "Speaking";
       pubkey: string;
     };
@@ -89,4 +94,7 @@ export type ServerMethod =
   | {
       method: "JoinVoice";
       channel_id: string;
+    }
+  | {
+      method: "LeaveVoice";
     };

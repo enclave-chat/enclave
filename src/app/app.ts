@@ -219,6 +219,17 @@ export default class Enclave<P = Page> {
         this.server?.getUsers([msg.pubkey]);
         return;
 
+      case "UserLeftVoice":
+        if (!server.voiceChatUsers[msg.channel_id]) return;
+
+        server.voiceChatUsers[msg.channel_id] = server.voiceChatUsers[
+          msg.channel_id
+        ].filter((v) => v !== msg.pubkey);
+
+        this.forceRender();
+
+        return;
+
       case "Speaking":
         clearTimeout(server.voiceChatSpeakers[msg.pubkey]);
 

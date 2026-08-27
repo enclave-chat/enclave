@@ -33,7 +33,7 @@ export default class EnclaveServer {
   public messages: Record<string, Record<string, StoredMessage>>;
   public users: Record<string, ClientMeta | null>;
 
-  public voiceJoin?: (pin: number, channelId: string) => void;
+  public voiceJoin?: (pin: bigint, channelId: string) => void;
   public voiceChatUsers: Record<string, string[]>;
   public voiceChatSpeakers: Record<string, NodeJS.Timeout>;
 

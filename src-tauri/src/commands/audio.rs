@@ -180,21 +180,22 @@ pub fn list_output_devices() -> Result<Vec<String>, String> {
 }
 
 // ============================================================================
-// CONFIG UPDATES & DISCONNECT
+// DISCONNECT
 // ============================================================================
 
 #[tauri::command]
 pub fn disconnect_from_vc(voice_state: State<VoiceState>) -> Result<(), String> {
-    if let Some(session) = voice_state.session.lock().unwrap().take() {
-        // Signal shutdown atomic to terminate sender and receiver loops
+    let mut lock = voice_state.session.lock().map_err(|e| e.to_string())?;
+
+    if let Some(session) = lock.take() {
         session.shutdown.store(true, Ordering::SeqCst);
 
-        // Pause CPAL hardware streams explicitly to flush playback drivers immediately
         let _ = session.input_stream.pause();
         if let Ok(output) = session.output_stream.lock() {
             let _ = output.pause();
         }
     }
+
     Ok(())
 }
 
@@ -490,4 +491,18 @@ fn build_output_stream(
             None,
         )
         .map_err(|e| e.to_string())
+}
+
+impl Drop for VoiceSession {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::SeqCst);
+
+        let _ = self.input_stream.pause();
+        if let Ok(output) = self.output_stream.lock() {
+            let _ = output.pause();
+        }
+
+        // Output hardware stream handle clean-up
+        eprintln!("[vc] VoiceSession dropped and audio streams paused.");
+    }
 }

@@ -1,9 +1,11 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "../PageView";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
+import { Phone, PhoneOff } from "lucide-react";
 
 export default function VoiceChannel({
   appRef,
@@ -13,28 +15,49 @@ export default function VoiceChannel({
   const channel = appRef.current?.page?.channel;
   if (!channel) return null;
 
+  const [isConnected, setIsConnected] = useState(false);
   const lastChannelId = useRef<string | null>(null);
 
-  useEffect(() => {
+  // Leave current channel setup
+  const handleLeave = () => {
+    appRef.current?.server?.websocket?.send({ method: "LeaveVoice" });
+    invoke("disconnect_from_vc").catch(console.error);
+    setIsConnected(false);
+  };
+
+  // Explicit action to join the voice channel
+  const handleJoin = () => {
     const hostname = appRef.current?.server?.hostname;
-    if (!hostname) return;
-    if (lastChannelId.current === channel.id) return;
-    lastChannelId.current = channel.id;
-
-    invoke("disconnect_from_vc");
-
-    if (channel.kind !== "voice" || !appRef.current?.server) return;
+    if (!hostname || channel.kind !== "voice" || !appRef.current?.server)
+      return;
 
     appRef.current.server.voiceJoin = (pin, channelId) => {
-      invoke("connect_to_vc", { hostname, pin, channelId }).catch(
-        console.error,
-      );
+      invoke("connect_to_vc", { hostname, pin, channelId })
+        .then(() => setIsConnected(true))
+        .catch(console.error);
     };
 
     appRef.current.server.websocket?.send({
       method: "JoinVoice",
       channel_id: channel.id,
     });
+
+    setIsConnected(true);
+  };
+
+  // Clean up when channel changes or component unmounts
+  useEffect(() => {
+    if (lastChannelId.current !== channel.id) {
+      if (isConnected) {
+        invoke("disconnect_from_vc").catch(console.error);
+        setIsConnected(false);
+      }
+      lastChannelId.current = channel.id;
+    }
+
+    return () => {
+      invoke("disconnect_from_vc").catch(console.error);
+    };
   }, [channel.id]);
 
   const speakers =
@@ -42,7 +65,6 @@ export default function VoiceChannel({
     Object.keys(appRef.current?.server?.voiceChatSpeakers);
 
   const users = appRef.current?.server?.voiceChatUsers[channel.id];
-
   const usersLength = users?.length || 0;
 
   // Dynamic grid column layout based on user count
@@ -61,13 +83,19 @@ export default function VoiceChannel({
   };
 
   return (
-    <div className="flex flex-col h-screen gap-2">
-      <header className="px-3 pt-3 pb-3 text-sm text-muted-foreground border-b border-b-border">
+    <div className="flex flex-col h-screen gap-2 pb-3">
+      {/* Header */}
+      <header className="px-3 pt-3 pb-3 text-sm text-muted-foreground border-b border-b-border flex justify-between items-center">
         <h2>{channel.name}</h2>
+        <span className="text-xs">
+          {usersLength} {usersLength === 1 ? "Participant" : "Participants"}
+        </span>
       </header>
+
+      {/* Main Grid */}
       <div
         className={cn(
-          "grid p-4 w-full gap-4 h-full auto-rows-fr bg-background/50 rounded-xl overflow-y-auto",
+          "grid p-4 w-full gap-4 flex-1 auto-rows-fr bg-background/50 rounded-xl overflow-y-auto",
           getGridCols(),
         )}
       >
@@ -101,15 +129,9 @@ export default function VoiceChannel({
                     {fallbackLetter}
                   </AvatarFallback>
                 </Avatar>
-
-                {/* Mute indicator badge overlay */}
-                {/*{user?.isMuted && (
-                  <div className="absolute -bottom-1 -right-1 p-1.5 bg-destructive rounded-full text-destructive-foreground shadow-md">
-                    <MicOff className="w-3.5 h-3.5" />
-                  </div>
-                )}*/}
               </div>
 
+              {/* Name Plate */}
               <div className="absolute bottom-3 left-3 max-w-[85%] truncate bg-background/80 backdrop-blur-md text-foreground py-1 px-2.5 rounded-md border border-border/50 text-xs font-medium shadow-sm">
                 {displayName}
               </div>
@@ -117,6 +139,29 @@ export default function VoiceChannel({
           );
         })}
       </div>
+
+      {/* Bottom Control Bar */}
+      <footer className="flex items-center justify-center px-4 py-2 border-t border-border/40 bg-card/50 rounded-xl mx-2">
+        {isConnected ? (
+          <Button
+            variant="destructive"
+            onClick={handleLeave}
+            className="flex items-center gap-2 font-medium px-6"
+          >
+            <PhoneOff className="w-4 h-4" />
+            Disconnect
+          </Button>
+        ) : (
+          <Button
+            variant="default"
+            onClick={handleJoin}
+            className="flex items-center gap-2 font-medium px-6 bg-emerald-600 hover:bg-emerald-700 text-white"
+          >
+            <Phone className="w-4 h-4" />
+            Join Voice
+          </Button>
+        )}
+      </footer>
     </div>
   );
 }
