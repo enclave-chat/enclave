@@ -28,12 +28,14 @@ export default class Enclave<P = Page> {
   public accounts?: AccountsFile;
   public server?: EnclaveServer;
   public serverList: ServerList;
+  public isSettingsOpen: boolean;
   public forceRender: () => void;
   public page?: P;
 
   public constructor() {
     this.serverList = {};
     this.forceRender = () => {};
+    this.isSettingsOpen = false;
   }
 
   public async init() {
@@ -202,6 +204,39 @@ export default class Enclave<P = Page> {
 
       case "MessageEdited":
         server.messages[msg.channel_id][msg.message.id] = msg.message;
+        this.forceRender();
+        return;
+
+      case "JoinVoice":
+        server.voiceJoin && server.voiceJoin(msg.pin, msg.channel_id);
+        return;
+
+      case "UserJoinedVoice":
+        if (!server.voiceChatUsers[msg.channel_id])
+          server.voiceChatUsers[msg.channel_id] = [];
+
+        server.voiceChatUsers[msg.channel_id].push(msg.pubkey);
+        this.server?.getUsers([msg.pubkey]);
+        return;
+
+      case "UserLeftVoice":
+        if (!server.voiceChatUsers[msg.channel_id]) return;
+
+        server.voiceChatUsers[msg.channel_id] = server.voiceChatUsers[
+          msg.channel_id
+        ].filter((v) => v !== msg.pubkey);
+
+        this.forceRender();
+
+        return;
+
+      case "Speaking":
+        clearTimeout(server.voiceChatSpeakers[msg.pubkey]);
+
+        server.voiceChatSpeakers[msg.pubkey] = setTimeout(() => {
+          delete server.voiceChatSpeakers[msg.pubkey];
+          this.forceRender();
+        }, 800);
         this.forceRender();
         return;
     }

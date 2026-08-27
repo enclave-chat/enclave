@@ -41,7 +41,16 @@ export default function AccountCard({
           </div>
         </div>
         <div className="flex items-center text-muted-foreground">
-          <Button variant="ghost" className="size-10">
+          <Button
+            variant="ghost"
+            className="size-10"
+            onClick={() => {
+              if (!appRef.current) return;
+
+              appRef.current.isSettingsOpen = !appRef.current?.isSettingsOpen;
+              appRef.current.forceRender();
+            }}
+          >
             <Settings2Icon className="size-5.5" />
           </Button>
         </div>

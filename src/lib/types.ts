@@ -24,4 +24,6 @@ export interface StoredMessage extends MessageData {
 export type Channel = { id: string; name: string } & ChannelKind;
 
 export type ChannelKind =
-  { kind: "text" } | { kind: "category"; channels: Channel[] };
+  | { kind: "category"; channels: Channel[] }
+  | { kind: "voice"; max_users: number }
+  | { kind: "text" };

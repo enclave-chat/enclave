@@ -1,16 +1,18 @@
 import Enclave from "@/app/app";
 import { Channel, ChannelKind } from "@/lib/types";
-import { ChevronDown, ChevronUp, HashIcon } from "lucide-react";
+import { ChevronDown, ChevronUp, HashIcon, Volume2Icon } from "lucide-react";
 import { useState } from "react";
 import AccountCard from "./AccountCard";
 import { cn } from "@/lib/utils";
 
 export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
   switch (kind) {
+    case "category":
+      return null;
     case "text":
       return <HashIcon className="p-0.5" />;
-    default:
-      return null;
+    case "voice":
+      return <Volume2Icon className="p-0.5" />;
   }
 }
 
