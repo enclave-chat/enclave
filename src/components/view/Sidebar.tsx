@@ -60,11 +60,12 @@ export function RenderFeatures({
   switch (channel.kind) {
     case "voice":
       const users = appRef.current?.server?.voiceChatUsers[channel.id];
+      const isCurrentVc = channel.id === appRef.current?.server?.voiceChannelId;
 
       return (
         users && (
           <div className="flex flex-col gap-1.5 px-4 pt-0.5">
-            {users.slice(0, 5).map((pubkey) => {
+            {(isCurrentVc ? users : users.slice(0, 15)).map((pubkey) => {
               const user = appRef.current?.server?.users[pubkey];
               if (!user) return null;
 
@@ -94,9 +95,9 @@ export function RenderFeatures({
                 </div>
               );
             })}
-            {users.length > 5 && (
+            {!isCurrentVc && users.length > 15 && (
               <span className="text-xs text-muted-foreground pl-1">
-                and {users.length - 5} others
+                and {users.length - 15} others
               </span>
             )}
           </div>
@@ -157,7 +158,7 @@ export default function Sidebar({
             <h1>{appRef.current.server.meta.name}</h1>
           </header>
 
-          <section className="px-1.5 pt-3.5 w-full flex flex-col gap-1">
+          <section className="px-1.5 pt-3.5 w-full h-full flex flex-col gap-1 overflow-y-scroll scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-55">
             <RenderChannels
               appRef={appRef}
               channels={appRef.current.server.meta.channels}
