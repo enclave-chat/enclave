@@ -12,14 +12,14 @@ export default function ServerList({
 
   return (
     <aside className="w-16 h-screen p-2 flex flex-col gap-2.5 border-r border-r-border shrink-0">
-      {Object.entries(appRef.current.serverList).map(([hostname, server]) => {
+      {appRef.current.serverList.map((server) => {
         return (
           <img
-            src={getHTTPUrl(hostname, server.isSecure, "/icon")}
-            key={hostname}
+            src={getHTTPUrl(server.hostname, server.isSecure, "/icon")}
+            key={server.hostname}
             className={cn(
               "rounded-lg",
-              hostname === appRef.current?.server?.hostname &&
+              server.hostname === appRef.current?.server?.hostname &&
                 "border-primary border border-2",
             )}
 
@@ -29,7 +29,7 @@ export default function ServerList({
                 return;
               }
 
-              appRef.current.connectToServer(hostname, server.isSecure);
+              appRef.current.connectToServer(server.hostname, server.isSecure);
             }}
           />
         );

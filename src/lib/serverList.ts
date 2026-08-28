@@ -2,12 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { ServerMeta } from "./types";
 
 export interface KnownServer {
-  meta: ServerMeta;
+  hostname: string;
   publicKey: string;
   isSecure: boolean;
+  meta: ServerMeta;
 }
 
-export type ServerList = Record<string, KnownServer>;
+export type ServerList = KnownServer[];
 
 export async function saveServerList(servers: ServerList): Promise<void> {
   await invoke("save_server_list", { servers });

@@ -10,7 +10,8 @@ import { Page } from "@/components/page/PageView";
 import { Channel } from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod } from "./protocol";
-import { Config, getConfig } from "@/lib/config";
+import { BackendConfig, Config, getConfig } from "@/lib/config";
+import * as sfx from "@/lib/soundEffects";
 
 ed.hashes.sha512 = sha512;
 
@@ -29,17 +30,23 @@ ed.hashes.sha512 = sha512;
  */
 export default class Enclave<P = Page> {
   public accounts?: AccountsFile;
+  public publicKey?: string;
   public server?: EnclaveServer;
   public serverList: ServerList;
   public isSettingsOpen: boolean;
   public forceRender: () => void;
   public page?: P;
   public config?: Config;
+  public backendConfig: BackendConfig;
 
   public constructor() {
-    this.serverList = {};
+    this.serverList = [];
     this.forceRender = () => {};
     this.isSettingsOpen = false;
+    this.backendConfig = {
+      isMuted: false,
+      isDeaf: false,
+    };
   }
 
   public async init() {
@@ -49,7 +56,15 @@ export default class Enclave<P = Page> {
   }
 
   public getAccount(): Account | null {
-    return this.accounts?.accounts[this.accounts.activeAccount] || null;
+    const account = this.accounts?.accounts[this.accounts.activeAccount];
+
+    if (account) {
+      this.publicKey = base58.encode(
+        ed.getPublicKey(base58.decode(account.privateKey)),
+      );
+    }
+
+    return account || null;
   }
 
   public getClientSecretKey() {
@@ -113,13 +128,17 @@ export default class Enclave<P = Page> {
       return;
     }
 
+    const serveridx = this.serverList.findIndex(
+      (server) => server.hostname === hostname,
+    );
+
     if (
-      this.serverList[hostname] &&
-      this.serverList[hostname].publicKey !==
+      serveridx >= 0 &&
+      this.serverList[serveridx].publicKey !==
         base58.encode(this.server.serverPublicKey)
     ) {
       console.error("Server's new public key doesn't match old one", {
-        old: this.serverList[hostname].publicKey,
+        old: this.serverList[serveridx].publicKey,
         new: base58.encode(this.server.serverPublicKey),
       });
       return;
@@ -156,11 +175,18 @@ export default class Enclave<P = Page> {
 
     this.server.meta = metaResponse.data as any;
 
-    this.serverList[hostname] = {
-      meta: metaResponse.data as any,
-      isSecure,
+    const serverItem = {
+      hostname,
       publicKey: base58.encode(this.server.serverPublicKey),
+      isSecure,
+      meta: metaResponse.data as any,
     };
+
+    if (serveridx >= 0) {
+      this.serverList[serveridx] = serverItem;
+    } else {
+      this.serverList.push(serverItem);
+    }
 
     this.forceRender();
   }
@@ -204,6 +230,8 @@ export default class Enclave<P = Page> {
     server.voiceChatSpeakers = {};
 
     this.forceRender();
+
+    sfx.playLeave();
   }
 
   public async onMessage(msg: ClientMethod) {
@@ -224,13 +252,28 @@ export default class Enclave<P = Page> {
         return;
 
       case "Messages":
+        const currentTimestamp = Date.now();
+        let shouldPlaySfx = false;
+
         const authors = Object.entries(msg.messages).flatMap(
           ([channelId, messages]) => {
             if (!server.messages[channelId]) {
               server.messages[channelId] = {};
             }
 
+            const page = this.page as Page | undefined;
+
+            const isInvisibleChannel = page?.channel.id !== channelId;
+
             return messages.map((message) => {
+              if (
+                Math.abs(currentTimestamp - message.timestamp) < 1000 &&
+                (isInvisibleChannel || document.visibilityState === "hidden") &&
+                message.author !== this.publicKey
+              ) {
+                shouldPlaySfx = true;
+              }
+
               server.messages[channelId][message.id] = message;
               return message.author;
             });
@@ -242,6 +285,8 @@ export default class Enclave<P = Page> {
         this.server?.getUsers(dedupedAuthors);
 
         this.forceRender();
+
+        if (shouldPlaySfx) sfx.playMessage();
 
         return;
 
@@ -274,6 +319,11 @@ export default class Enclave<P = Page> {
 
         server.voiceChatUsers[msg.channel_id].push(msg.pubkey);
         this.server?.getUsers([msg.pubkey]);
+
+        if (msg.channel_id === this.server?.voiceChannelId) {
+          sfx.playJoin();
+        }
+
         return;
 
       case "UserLeftVoice":
@@ -284,6 +334,10 @@ export default class Enclave<P = Page> {
         ].filter((v) => v !== msg.pubkey);
 
         this.forceRender();
+
+        if (msg.channel_id === this.server?.voiceChannelId) {
+          sfx.playLeave();
+        }
 
         return;
 

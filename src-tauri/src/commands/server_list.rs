@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fs};
+use std::fs;
 use tauri::{AppHandle, Manager};
 
 use crate::types::ServerMeta;
@@ -7,12 +7,13 @@ use crate::types::ServerMeta;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KnownServer {
-    pub meta: ServerMeta,
+    pub hostname: String,
     pub public_key: String,
     pub is_secure: bool,
+    pub meta: ServerMeta,
 }
 
-type ServerList = HashMap<String, KnownServer>;
+type ServerList = Vec<KnownServer>;
 
 fn servers_file_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app
