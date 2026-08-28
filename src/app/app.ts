@@ -134,8 +134,19 @@ export default class Enclave<P = Page> {
 
     if (this.server.websocket) {
       this.server.websocket.send({ method: "Meta", ...account.meta });
-      this.server.websocket.websocket.onmessage = (msg) => {
-        this.onMessage(JSON.parse(msg.data));
+      this.server.websocket.websocket.onmessage = async (msg) => {
+        let buffer: ArrayBuffer;
+        if (msg.data instanceof Blob) {
+          buffer = await msg.data.arrayBuffer();
+        } else {
+          buffer = msg.data as ArrayBuffer;
+        }
+
+        const encrypted = new Uint8Array(buffer);
+        const plaintext = this.server?.websocket?.decrypt(encrypted);
+        const data = JSON.parse(new TextDecoder().decode(plaintext));
+
+        this.onMessage(data);
       };
     }
 
