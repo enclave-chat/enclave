@@ -64,7 +64,7 @@ export function RenderFeatures({
       return (
         users && (
           <div className="flex flex-col gap-1.5 px-4 pt-0.5">
-            {users.map((pubkey) => {
+            {users.slice(0, 5).map((pubkey) => {
               const user = appRef.current?.server?.users[pubkey];
               if (!user) return null;
 
@@ -94,6 +94,11 @@ export function RenderFeatures({
                 </div>
               );
             })}
+            {users.length > 5 && (
+              <span className="text-xs text-muted-foreground pl-1">
+                and {users.length - 5} others
+              </span>
+            )}
           </div>
         )
       );
