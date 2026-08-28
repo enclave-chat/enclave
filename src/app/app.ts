@@ -11,6 +11,7 @@ import { Channel } from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod } from "./protocol";
 import { BackendConfig, Config, getConfig } from "@/lib/config";
+import { playJoin, playLeave } from "@/lib/soundEffects";
 
 ed.hashes.sha512 = sha512;
 
@@ -220,6 +221,8 @@ export default class Enclave<P = Page> {
     server.voiceChatSpeakers = {};
 
     this.forceRender();
+
+    playLeave();
   }
 
   public async onMessage(msg: ClientMethod) {
@@ -290,6 +293,11 @@ export default class Enclave<P = Page> {
 
         server.voiceChatUsers[msg.channel_id].push(msg.pubkey);
         this.server?.getUsers([msg.pubkey]);
+
+        if (msg.channel_id === this.server?.voiceChannelId) {
+          playJoin();
+        }
+
         return;
 
       case "UserLeftVoice":
@@ -300,6 +308,10 @@ export default class Enclave<P = Page> {
         ].filter((v) => v !== msg.pubkey);
 
         this.forceRender();
+
+        if (msg.channel_id === this.server?.voiceChannelId) {
+          playLeave();
+        }
 
         return;
 
