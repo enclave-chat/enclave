@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chacha20poly1305::{aead::KeyInit, ChaCha20Poly1305, Key};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
     storage::Heap,
@@ -17,11 +18,10 @@ use ringbuf::{
 };
 use tauri::State;
 
-use crate::commands::config::ConfigState;
+use crate::{commands::config::ConfigState, crypto::SessionCipher};
 
 const TARGET_SAMPLE_RATE: u32 = 48_000;
-const PACKET_SAMPLES: usize = 960; // 20ms @ 48kHz mono
-const HEADER_SIZE: usize = 4;
+const PACKET_SAMPLES: usize = 960;
 const MAX_PACKET_SIZE: usize = 4096;
 
 const INITIAL_PACKET_CUSHION: usize = 3;
@@ -345,10 +345,14 @@ pub fn disconnect_from_vc(voice_state: State<'_, VoiceState>) -> Result<(), Stri
 pub fn connect_to_vc(
     hostname: String,
     pin: u64,
+    shared_secret: Vec<u8>, // output of js `x25519.getSharedSecret`
     config_state: State<'_, ConfigState>,
     voice_state: State<'_, VoiceState>,
 ) -> Result<(), String> {
     disconnect_from_vc(voice_state.clone())?;
+
+    let key = Key::try_from(shared_secret.as_slice()).map_err(|v| v.to_string())?;
+    let cipher = Arc::new(Mutex::new(SessionCipher::new(ChaCha20Poly1305::new(&key))));
 
     let config = config_state.0.lock().unwrap().clone();
     let state_inner = Arc::clone(&voice_state.inner);
@@ -444,10 +448,10 @@ pub fn connect_to_vc(
     {
         let input_socket = socket.clone();
         let shutdown = shutdown.clone();
+        let cipher = cipher.clone();
 
         thread::spawn(move || {
             let mut sequence = 0u32;
-            let mut net_packet = vec![0u8; HEADER_SIZE + PACKET_SAMPLES * 2];
             let mut frame_buf = vec![0.0f32; PACKET_SAMPLES];
             let mut hangover_counter = 0;
 
@@ -469,12 +473,20 @@ pub fn connect_to_vc(
                     };
 
                     if is_speaking {
-                        net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
-                        for (i, sample) in frame_buf.iter().enumerate() {
+                        // sequence goes INSIDE the plaintext now, prefixed before the PCM
+                        let mut plaintext = Vec::with_capacity(4 + PACKET_SAMPLES * 2);
+                        plaintext.extend_from_slice(&sequence.to_be_bytes());
+
+                        for sample in frame_buf.iter() {
                             let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-                            let offset = HEADER_SIZE + i * 2;
-                            net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
+                            plaintext.extend_from_slice(&pcm.to_be_bytes());
                         }
+
+                        let Ok(net_packet) = cipher.lock().unwrap().encrypt(&plaintext) else {
+                            eprintln!("[vc] failed to encrypt outgoing packet");
+                            sequence = sequence.wrapping_add(1);
+                            continue;
+                        };
 
                         let _ = input_socket.send(&net_packet);
                         sequence = sequence.wrapping_add(1);
@@ -490,6 +502,7 @@ pub fn connect_to_vc(
     {
         let socket = socket.clone();
         let shutdown = shutdown.clone();
+        let cipher = cipher.clone();
 
         thread::spawn(move || {
             let mut packets: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
@@ -501,15 +514,25 @@ pub fn connect_to_vc(
 
             while !shutdown.load(Ordering::Relaxed) {
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
-                    if len > HEADER_SIZE {
-                        let seq = u32::from_be_bytes(udp_buffer[0..4].try_into().unwrap());
-                        let pcm = &udp_buffer[HEADER_SIZE..len];
-                        let samples: Vec<f32> = pcm
-                            .chunks_exact(2)
-                            .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
-                            .collect();
+                    match cipher.lock().unwrap().decrypt(&udp_buffer[..len]) {
+                        Ok(plaintext) => {
+                            if plaintext.len() < 4 {
+                                eprintln!("[vc] dropped packet: too short after decrypt");
+                            } else {
+                                let seq = u32::from_be_bytes(plaintext[..4].try_into().unwrap());
+                                let pcm = &plaintext[4..];
 
-                        packets.insert(seq, samples);
+                                let samples: Vec<f32> = pcm
+                                    .chunks_exact(2)
+                                    .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
+                                    .collect();
+
+                                packets.insert(seq, samples);
+                            }
+                        }
+                        Err(_) => {
+                            eprintln!("[vc] dropped packet: decryption failed");
+                        }
                     }
                 }
 

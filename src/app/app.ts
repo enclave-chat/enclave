@@ -171,7 +171,11 @@ export default class Enclave<P = Page> {
     if (!server || channel.kind !== "voice") return;
 
     server.voiceJoin = (pin, channelId) => {
-      invoke("connect_to_vc", { hostname: server.hostname, pin, channelId })
+      invoke("connect_to_vc", {
+        hostname: server.hostname,
+        pin,
+        sharedSecret: server.websocket?.sharedSecret,
+      })
         .then(() => {
           server.isInVoiceChat = true;
           server.voiceChannelId = channelId;

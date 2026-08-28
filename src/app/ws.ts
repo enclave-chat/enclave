@@ -18,7 +18,7 @@ export default class EnclaveWebSocket {
 
   private sendCounter = 0n;
   private recvCounter = 0n;
-  private sharedSecret: Uint8Array | null = null;
+  public sharedSecret: Uint8Array | null = null;
 
   private readonly handshakeReady: Promise<void>;
   private resolveHandshake!: () => void;
