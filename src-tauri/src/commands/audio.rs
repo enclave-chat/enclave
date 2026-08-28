@@ -21,7 +21,10 @@ use ringbuf::{
 };
 use tauri::State;
 
-use crate::{commands::config::ConfigState, crypto::SessionCipher};
+use crate::{
+    commands::config::{BackendConfig, ConfigState},
+    crypto::SessionCipher,
+};
 
 const TARGET_SAMPLE_RATE: u32 = 48_000;
 const PACKET_SAMPLES: usize = 960;
@@ -57,6 +60,8 @@ pub struct VoiceSession {
 
     pub producer_in: AudioProducer,
     pub consumer_out: AudioConsumer,
+
+    pub backend_config: Arc<Mutex<BackendConfig>>,
 }
 
 fn resolve_input_device(device_name: &Option<String>) -> Result<cpal::Device, String> {
@@ -72,9 +77,9 @@ fn resolve_input_device(device_name: &Option<String>) -> Result<cpal::Device, St
                     .unwrap_or(false)
             })
             .ok_or_else(|| format!("Input device not found: {name}")),
-        None => host.default_input_device().ok_or_else(|| {
-            format!("No default input device")
-        }),
+        None => host
+            .default_input_device()
+            .ok_or_else(|| format!("No default input device")),
     }
 }
 
@@ -91,9 +96,9 @@ fn resolve_output_device(device_name: &Option<String>) -> Result<cpal::Device, S
                     .unwrap_or(false)
             })
             .ok_or_else(|| format!("Output device not found: {name}")),
-        None => host.default_output_device().ok_or_else(|| {
-            format!("No default output device")
-        }),
+        None => host
+            .default_output_device()
+            .ok_or_else(|| format!("No default output device")),
     }
 }
 
@@ -561,6 +566,11 @@ pub fn connect_to_vc(
         current_output_device: config.output_device_name.clone(),
         producer_in: Arc::clone(&shared_producer_in),
         consumer_out: Arc::clone(&shared_consumer_out),
+
+        backend_config: Arc::new(Mutex::new(BackendConfig {
+            is_muted: false,
+            is_deaf: false,
+        })),
     };
 
     session.setup_input(config.input_device_name.clone(), Arc::clone(&state_inner))?;
@@ -571,6 +581,7 @@ pub fn connect_to_vc(
         let input_socket = socket.clone();
         let shutdown = shutdown.clone();
         let cipher = cipher.clone();
+        let backend_config = session.backend_config.clone();
 
         thread::spawn(move || {
             let mut sequence = 0u32;
@@ -581,6 +592,22 @@ pub fn connect_to_vc(
             let mut noise_floor: f32 = 0.0;
 
             while !shutdown.load(Ordering::Relaxed) {
+                let (is_muted, is_deaf) = {
+                    let cfg = backend_config.lock().unwrap();
+                    (cfg.is_muted, cfg.is_deaf)
+                };
+
+                if is_muted || is_deaf {
+                    // Clear audio recorded while muted to avoid stale transmission on unmute
+                    let available = consumer_in.occupied_len();
+                    if available > 0 {
+                        consumer_in.skip(available);
+                    }
+
+                    thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+
                 if consumer_in.occupied_len() >= PACKET_SAMPLES {
                     let _ = consumer_in.pop_slice(&mut frame_buf);
 
@@ -654,6 +681,7 @@ pub fn connect_to_vc(
         let socket = socket.clone();
         let shutdown = shutdown.clone();
         let cipher = cipher.clone();
+        let backend_config = session.backend_config.clone();
 
         thread::spawn(move || {
             let mut packets: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
@@ -666,6 +694,16 @@ pub fn connect_to_vc(
             let mut loop_count: u64 = 0;
 
             while !shutdown.load(Ordering::Relaxed) {
+                let is_deaf = { backend_config.lock().unwrap().is_deaf };
+
+                if is_deaf {
+                    packets.clear();
+                    is_prebuffering = true;
+
+                    std::thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
+
                 loop_count += 1;
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
                     recv_count += 1;

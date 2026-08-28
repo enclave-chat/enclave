@@ -1,11 +1,20 @@
 import { Card } from "../ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
-import { CopyIcon, PhoneOff, Settings2Icon, Signal } from "lucide-react";
+import {
+  CopyIcon,
+  Headset,
+  Mic,
+  MicOff,
+  PhoneOff,
+  Settings2Icon,
+  Signal,
+} from "lucide-react";
 import { Button } from "../ui/button";
 import Enclave from "@/app/app";
 import { base58 } from "@scure/base";
 import * as ed from "@noble/ed25519";
 import { Channel } from "@/lib/types";
+import { updateBackendConfig } from "@/lib/config";
 
 function findChannel(channels: Channel[], id: string): Channel | undefined {
   for (const channel of channels) {
@@ -38,9 +47,9 @@ export default function StatusCard({
 
   return (
     <div className="absolute -left-16 right-16 bottom-0 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden">
-      <Card className="px-3 py-3 h-full w-full flex flex-col gap-0.5">
+      <Card className="px-3 py-3 h-full w-full flex flex-col gap-1.5">
         {voiceChannel && (
-          <div className="text-emerald-500 flex flex-row items-center gap-2 border-b pb-2.5">
+          <div className="text-emerald-500 flex flex-row items-center gap-2 border-b pb-2">
             <Signal className="h-5" />
             <div className="flex flex-col">
               <span>Voice Connected</span>
@@ -82,6 +91,46 @@ export default function StatusCard({
             </div>
           </div>
           <div className="flex items-center text-muted-foreground">
+            <Button
+              variant={
+                appRef.current?.backendConfig.isDeaf ? "destructive" : "ghost"
+              }
+              className="size-10"
+              onClick={() => {
+                if (!appRef.current) return;
+
+                appRef.current.backendConfig.isDeaf =
+                  !appRef.current.backendConfig.isDeaf;
+
+                updateBackendConfig(appRef.current.backendConfig);
+
+                appRef.current.forceRender();
+              }}
+            >
+              <Headset className="size-5.5" />
+            </Button>
+            <Button
+              variant={
+                appRef.current?.backendConfig.isMuted ? "destructive" : "ghost"
+              }
+              className="size-10"
+              onClick={() => {
+                if (!appRef.current) return;
+
+                appRef.current.backendConfig.isMuted =
+                  !appRef.current.backendConfig.isMuted;
+
+                updateBackendConfig(appRef.current.backendConfig);
+
+                appRef.current.forceRender();
+              }}
+            >
+              {appRef.current?.backendConfig.isMuted ? (
+                <MicOff className="size-5.5" />
+              ) : (
+                <Mic className="size-5.5" />
+              )}
+            </Button>
             <Button
               variant="ghost"
               className="size-10"

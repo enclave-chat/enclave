@@ -10,7 +10,7 @@ import { Page } from "@/components/page/PageView";
 import { Channel } from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod } from "./protocol";
-import { Config, getConfig } from "@/lib/config";
+import { BackendConfig, Config, getConfig } from "@/lib/config";
 
 ed.hashes.sha512 = sha512;
 
@@ -35,11 +35,16 @@ export default class Enclave<P = Page> {
   public forceRender: () => void;
   public page?: P;
   public config?: Config;
+  public backendConfig: BackendConfig;
 
   public constructor() {
     this.serverList = [];
     this.forceRender = () => {};
     this.isSettingsOpen = false;
+    this.backendConfig = {
+      isMuted: false,
+      isDeaf: false,
+    };
   }
 
   public async init() {
@@ -113,12 +118,12 @@ export default class Enclave<P = Page> {
       return;
     }
 
-    const serveridx = this.serverList.findIndex((server) => {
-      server.hostname === hostname;
-    });
+    const serveridx = this.serverList.findIndex(
+      (server) => server.hostname === hostname,
+    );
 
     if (
-      this.serverList[serveridx] &&
+      serveridx >= 0 &&
       this.serverList[serveridx].publicKey !==
         base58.encode(this.server.serverPublicKey)
     ) {
@@ -167,7 +172,7 @@ export default class Enclave<P = Page> {
       meta: metaResponse.data as any,
     };
 
-    if (this.serverList[serveridx]) {
+    if (serveridx >= 0) {
       this.serverList[serveridx] = serverItem;
     } else {
       this.serverList.push(serverItem);
