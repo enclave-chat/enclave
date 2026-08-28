@@ -30,6 +30,7 @@ ed.hashes.sha512 = sha512;
  */
 export default class Enclave<P = Page> {
   public accounts?: AccountsFile;
+  public publicKey?: string;
   public server?: EnclaveServer;
   public serverList: ServerList;
   public isSettingsOpen: boolean;
@@ -55,7 +56,15 @@ export default class Enclave<P = Page> {
   }
 
   public getAccount(): Account | null {
-    return this.accounts?.accounts[this.accounts.activeAccount] || null;
+    const account = this.accounts?.accounts[this.accounts.activeAccount];
+
+    if (account) {
+      this.publicKey = base58.encode(
+        ed.getPublicKey(base58.decode(account.privateKey)),
+      );
+    }
+
+    return account || null;
   }
 
   public getClientSecretKey() {
@@ -259,7 +268,8 @@ export default class Enclave<P = Page> {
             return messages.map((message) => {
               if (
                 Math.abs(currentTimestamp - message.timestamp) < 1000 &&
-                (isInvisibleChannel || document.visibilityState === "hidden")
+                (isInvisibleChannel || document.visibilityState === "hidden") &&
+                message.author !== this.publicKey
               ) {
                 shouldPlaySfx = true;
               }
