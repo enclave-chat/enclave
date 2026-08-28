@@ -4,6 +4,7 @@ import { ChevronDown, ChevronUp, HashIcon, Volume2Icon } from "lucide-react";
 import { useState } from "react";
 import StatusCard from "./StatusCard";
 import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 
 export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
   switch (kind) {
@@ -49,6 +50,48 @@ export function RenderCategory({
   );
 }
 
+export function RenderFeatures({
+  appRef,
+  channel,
+}: {
+  appRef: React.RefObject<Enclave | null>;
+  channel: Channel;
+}) {
+  switch (channel.kind) {
+    case "voice":
+      const users = appRef.current?.server?.voiceChatUsers[channel.id];
+
+      return (
+        users && (
+          <div className="flex flex-col gap-1.5 px-4 pt-0.5">
+            {users.map((pubkey) => {
+              const user = appRef.current?.server?.users[pubkey];
+              if (!user) return null;
+
+              return (
+                <div key={pubkey} className="flex flex-row items-center gap-2">
+                  <Avatar className="h-7 w-7">
+                    <AvatarImage src={user.avatar} />
+                    <AvatarFallback>
+                      {user?.displayName.slice(0, 1).toUpperCase() ||
+                        pubkey.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+
+                  <span className="text-sm text-muted-foreground">
+                    {user.displayName}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )
+      );
+    default:
+      return null;
+  }
+}
+
 export function RenderChannels({
   appRef,
   channels,
@@ -60,25 +103,27 @@ export function RenderChannels({
     channel.kind === "category" ? (
       <RenderCategory key={channel.id} appRef={appRef} channel={channel} />
     ) : (
-      <div
-        key={channel.id}
-        className={cn(
-          "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
-          channel.id === appRef.current?.page?.channel.id,
-        )}
-        onClick={() => {
-          if (!appRef.current) {
-            console.error("AppRef is not initialized yet");
-            return;
-          }
+      <div className="flex flex-col" key={channel.id}>
+        <div
+          className={cn(
+            "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
+            channel.id === appRef.current?.page?.channel.id,
+          )}
+          onClick={() => {
+            if (!appRef.current) {
+              console.error("AppRef is not initialized yet");
+              return;
+            }
 
-          appRef.current.page = { kind: "channel", channel };
+            appRef.current.page = { kind: "channel", channel };
 
-          appRef.current.forceRender();
-        }}
-      >
-        <ChannelIcon kind={channel.kind} />
-        {channel.name}
+            appRef.current.forceRender();
+          }}
+        >
+          <ChannelIcon kind={channel.kind} />
+          {channel.name}
+        </div>
+        <RenderFeatures appRef={appRef} channel={channel} />
       </div>
     ),
   );
