@@ -3,7 +3,6 @@ use chacha20poly1305::{aead::Aead, ChaCha20Poly1305, Nonce};
 pub struct SessionCipher {
     cipher: ChaCha20Poly1305,
     send_counter: u64,
-    recv_counter: u64,
 }
 
 impl SessionCipher {
@@ -11,11 +10,10 @@ impl SessionCipher {
         Self {
             cipher,
             send_counter: 0,
-            recv_counter: 0,
         }
     }
 
-    pub fn next_send_nonce(&mut self) -> [u8; 12] {
+    fn next_send_nonce(&mut self) -> [u8; 12] {
         let mut nonce = [0u8; 12];
         nonce[..8].copy_from_slice(&self.send_counter.to_be_bytes());
         // top bit distinguishes "send" direction from "recv" direction,
@@ -23,13 +21,6 @@ impl SessionCipher {
         // both happened to reach the same numeric value
         nonce[11] |= 0b1000_0000;
         self.send_counter += 1;
-        nonce
-    }
-
-    pub fn next_recv_nonce(&mut self) -> [u8; 12] {
-        let mut nonce = [0u8; 12];
-        nonce[..8].copy_from_slice(&self.recv_counter.to_be_bytes());
-        self.recv_counter += 1;
         nonce
     }
 
@@ -48,11 +39,15 @@ impl SessionCipher {
         Ok(out)
     }
 
-    pub fn decrypt(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, String> {
         if data.len() < 12 {
             return Err("message too short to contain a nonce".to_string());
         }
         let (nonce_bytes, ciphertext) = data.split_at(12);
+
+        // Use the nonce that travelled with this packet rather than a locally
+        // tracked counter. This makes decryption immune to UDP packet loss or
+        // reordering, because we never desync from the sender's counter.
         let nonce = Nonce::try_from(nonce_bytes).map_err(|v| v.to_string())?;
 
         self.cipher
