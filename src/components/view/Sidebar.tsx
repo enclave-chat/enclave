@@ -2,8 +2,9 @@ import Enclave from "@/app/app";
 import { Channel, ChannelKind } from "@/lib/types";
 import { ChevronDown, ChevronUp, HashIcon, Volume2Icon } from "lucide-react";
 import { useState } from "react";
-import AccountCard from "./AccountCard";
+import StatusCard from "./StatusCard";
 import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 
 export function ChannelIcon({ kind }: { kind: ChannelKind["kind"] }) {
   switch (kind) {
@@ -49,6 +50,64 @@ export function RenderCategory({
   );
 }
 
+export function RenderFeatures({
+  appRef,
+  channel,
+}: {
+  appRef: React.RefObject<Enclave | null>;
+  channel: Channel;
+}) {
+  switch (channel.kind) {
+    case "voice":
+      const users = appRef.current?.server?.voiceChatUsers[channel.id];
+      const isCurrentVc = channel.id === appRef.current?.server?.voiceChannelId;
+
+      return (
+        users && (
+          <div className="flex flex-col gap-1.5 px-4 pt-0.5">
+            {(isCurrentVc ? users : users.slice(0, 15)).map((pubkey) => {
+              const user = appRef.current?.server?.users[pubkey];
+              if (!user) return null;
+
+              const isSpeaking =
+                appRef.current?.server?.voiceChatSpeakers[pubkey];
+
+              return (
+                <div key={pubkey} className="flex flex-row items-center gap-2">
+                  <Avatar
+                    className={cn(
+                      "h-7 w-7",
+                      isSpeaking
+                        ? "ring-2 ring-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.25)] bg-card"
+                        : "ring-1 ring-border/60 hover:ring-border",
+                    )}
+                  >
+                    <AvatarImage src={user.avatar} />
+                    <AvatarFallback>
+                      {user?.displayName.slice(0, 1).toUpperCase() ||
+                        pubkey.slice(0, 2).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+
+                  <span className="text-sm text-muted-foreground">
+                    {user.displayName}
+                  </span>
+                </div>
+              );
+            })}
+            {!isCurrentVc && users.length > 15 && (
+              <span className="text-xs text-muted-foreground pl-1">
+                and {users.length - 15} others
+              </span>
+            )}
+          </div>
+        )
+      );
+    default:
+      return null;
+  }
+}
+
 export function RenderChannels({
   appRef,
   channels,
@@ -60,25 +119,27 @@ export function RenderChannels({
     channel.kind === "category" ? (
       <RenderCategory key={channel.id} appRef={appRef} channel={channel} />
     ) : (
-      <div
-        key={channel.id}
-        className={cn(
-          "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
-          channel.id === appRef.current?.page?.channel.id,
-        )}
-        onClick={() => {
-          if (!appRef.current) {
-            console.error("AppRef is not initialized yet");
-            return;
-          }
+      <div className="flex flex-col" key={channel.id}>
+        <div
+          className={cn(
+            "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
+            channel.id === appRef.current?.page?.channel.id,
+          )}
+          onClick={() => {
+            if (!appRef.current) {
+              console.error("AppRef is not initialized yet");
+              return;
+            }
 
-          appRef.current.page = { kind: "channel", channel };
+            appRef.current.page = { kind: "channel", channel };
 
-          appRef.current.forceRender();
-        }}
-      >
-        <ChannelIcon kind={channel.kind} />
-        {channel.name}
+            appRef.current.forceRender();
+          }}
+        >
+          <ChannelIcon kind={channel.kind} />
+          {channel.name}
+        </div>
+        <RenderFeatures appRef={appRef} channel={channel} />
       </div>
     ),
   );
@@ -97,7 +158,7 @@ export default function Sidebar({
             <h1>{appRef.current.server.meta.name}</h1>
           </header>
 
-          <section className="px-1.5 pt-3.5 w-full flex flex-col gap-1">
+          <section className="px-1.5 pt-3.5 w-full h-full flex flex-col gap-1 overflow-y-scroll scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-55">
             <RenderChannels
               appRef={appRef}
               channels={appRef.current.server.meta.channels}
@@ -106,7 +167,7 @@ export default function Sidebar({
         </>
       )}
 
-      <AccountCard appRef={appRef} />
+      <StatusCard appRef={appRef} />
     </div>
   );
 }

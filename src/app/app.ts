@@ -7,7 +7,10 @@ import { base58 } from "@scure/base";
 import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
 import { Page } from "@/components/page/PageView";
+import { Channel } from "@/lib/types";
+import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod } from "./protocol";
+import { Config, getConfig } from "@/lib/config";
 
 ed.hashes.sha512 = sha512;
 
@@ -31,6 +34,7 @@ export default class Enclave<P = Page> {
   public isSettingsOpen: boolean;
   public forceRender: () => void;
   public page?: P;
+  public config?: Config;
 
   public constructor() {
     this.serverList = {};
@@ -41,6 +45,7 @@ export default class Enclave<P = Page> {
   public async init() {
     this.serverList = await getServerList();
     this.accounts = await getAccounts();
+    this.config = await getConfig();
   }
 
   public getAccount(): Account | null {
@@ -129,8 +134,19 @@ export default class Enclave<P = Page> {
 
     if (this.server.websocket) {
       this.server.websocket.send({ method: "Meta", ...account.meta });
-      this.server.websocket.websocket.onmessage = (msg) => {
-        this.onMessage(JSON.parse(msg.data));
+      this.server.websocket.websocket.onmessage = async (msg) => {
+        let buffer: ArrayBuffer;
+        if (msg.data instanceof Blob) {
+          buffer = await msg.data.arrayBuffer();
+        } else {
+          buffer = msg.data as ArrayBuffer;
+        }
+
+        const encrypted = new Uint8Array(buffer);
+        const plaintext = this.server?.websocket?.decrypt(encrypted);
+        const data = JSON.parse(new TextDecoder().decode(plaintext));
+
+        this.onMessage(data);
       };
     }
 
@@ -145,6 +161,47 @@ export default class Enclave<P = Page> {
       isSecure,
       publicKey: base58.encode(this.server.serverPublicKey),
     };
+
+    this.forceRender();
+  }
+
+  public joinVoice(channel: Channel) {
+    const server = this.server;
+
+    if (!server || channel.kind !== "voice") return;
+
+    if (server.voiceChannelId) this.leaveVoice();
+
+    server.voiceJoin = (pin, channelId) => {
+      invoke("connect_to_vc", {
+        hostname: server.hostname,
+        pin,
+        sharedSecret: server.websocket?.sharedSecret,
+      })
+        .then(() => {
+          server.voiceChannelId = channelId;
+          this.forceRender();
+        })
+        .catch(console.error);
+    };
+
+    server.voiceChannelId = channel.id;
+
+    server.websocket?.send({ method: "JoinVoice", channel_id: channel.id });
+
+    this.forceRender();
+  }
+
+  public leaveVoice() {
+    const server = this.server;
+
+    if (!server || !server.voiceChannelId) return;
+
+    server.websocket?.send({ method: "LeaveVoice" });
+    invoke("disconnect_from_vc").catch(console.error);
+
+    server.voiceChannelId = undefined;
+    server.voiceChatSpeakers = {};
 
     this.forceRender();
   }

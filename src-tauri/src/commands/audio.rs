@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use chacha20poly1305::{aead::KeyInit, ChaCha20Poly1305, Key};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use ringbuf::{
     storage::Heap,
@@ -17,21 +18,16 @@ use ringbuf::{
 };
 use tauri::State;
 
-use crate::commands::config::ConfigState;
+use crate::{commands::config::ConfigState, crypto::SessionCipher};
 
-const PACKET_SAMPLES: usize = 960; // 20ms @ 48kHz
-const HEADER_SIZE: usize = 4;
+const TARGET_SAMPLE_RATE: u32 = 48_000;
+const PACKET_SAMPLES: usize = 960;
 const MAX_PACKET_SIZE: usize = 4096;
 
-const INITIAL_PACKET_CUSHION: usize = 3; // ~60ms cushion
+const INITIAL_PACKET_CUSHION: usize = 3;
 
-// --- Voice Activity Detection (VAD) Settings ---
 const VAD_THRESHOLD: f32 = 0.01;
 const VAD_HANGOVER_FRAMES: usize = 10;
-
-// ============================================================================
-// STATE & TYPES
-// ============================================================================
 
 type AudioProducer = Arc<Mutex<CachingProd<Arc<SharedRb<Heap<f32>>>>>>;
 type AudioConsumer = Arc<Mutex<CachingCons<Arc<SharedRb<Heap<f32>>>>>>;
@@ -58,6 +54,39 @@ pub struct VoiceSession {
 
     pub producer_in: AudioProducer,
     pub consumer_out: AudioConsumer,
+}
+
+// Simple Linear Resampler for real-time audio conversion
+struct LinearResampler {
+    phase: f64,
+}
+
+impl LinearResampler {
+    fn new() -> Self {
+        Self { phase: 0.0 }
+    }
+
+    /// Resamples dynamic buffers from `src_rate` to `dst_rate`
+    fn process(&mut self, input: &[f32], src_rate: u32, dst_rate: u32, output: &mut Vec<f32>) {
+        if src_rate == dst_rate {
+            output.extend_from_slice(input);
+            return;
+        }
+
+        let ratio = src_rate as f64 / dst_rate as f64;
+        while self.phase < input.len() as f64 {
+            let idx = self.phase as usize;
+            let frac = (self.phase - idx as f64) as f32;
+            let next_idx = (idx + 1).min(input.len() - 1);
+
+            let sample = input[idx] * (1.0 - frac) + input[next_idx] * frac;
+            output.push(sample);
+
+            self.phase += ratio;
+        }
+
+        self.phase -= input.len() as f64;
+    }
 }
 
 impl VoiceSession {
@@ -89,32 +118,7 @@ impl VoiceSession {
             .config();
 
         let producer = Arc::clone(&self.producer_in);
-        let inner_clone = Arc::clone(&state_inner);
-
-        let new_stream = device
-            .build_input_stream(
-                input_config,
-                move |data: &[f32], _| {
-                    if let Ok(mut prod) = producer.lock() {
-                        let _ = prod.push_slice(data);
-                    }
-                },
-                move |err| {
-                    eprintln!("[vc] Input error: {err}. Attempting input stream recovery...");
-                    if let Ok(mut lock) = inner_clone.session.lock() {
-                        if let Some(session) = lock.as_mut() {
-                            let target_device = session.current_input_device.clone();
-                            if let Err(e) =
-                                session.update_input_device(target_device, Arc::clone(&inner_clone))
-                            {
-                                eprintln!("[vc] Input recovery failed: {e}");
-                            }
-                        }
-                    }
-                },
-                None,
-            )
-            .map_err(|e| e.to_string())?;
+        let new_stream = build_input_stream(&device, input_config, producer, state_inner)?;
 
         new_stream
             .play()
@@ -167,9 +171,136 @@ impl VoiceSession {
     }
 }
 
-// ============================================================================
-// DEVICES
-// ============================================================================
+// Helper to build normalized Input Stream (Resampled & Downmixed to 48kHz Mono)
+fn build_input_stream(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    producer: AudioProducer,
+    state_inner: Arc<VoiceStateInner>,
+) -> Result<cpal::Stream, String> {
+    let native_sample_rate = config.sample_rate;
+    let channels = config.channels as usize;
+    let mut resampler = LinearResampler::new();
+    let mut mono_buffer = Vec::with_capacity(2048);
+    let mut resampled_buffer = Vec::with_capacity(2048);
+
+    let inner_input_err = Arc::clone(&state_inner);
+
+    device
+        .build_input_stream(
+            config,
+            move |data: &[f32], _| {
+                mono_buffer.clear();
+                resampled_buffer.clear();
+
+                // Downmix channels to mono
+                for chunk in data.chunks_exact(channels) {
+                    let sum: f32 = chunk.iter().sum();
+                    mono_buffer.push(sum / channels as f32);
+                }
+
+                // Resample to 48kHz standard target
+                resampler.process(
+                    &mono_buffer,
+                    native_sample_rate,
+                    TARGET_SAMPLE_RATE,
+                    &mut resampled_buffer,
+                );
+
+                if let Ok(mut prod) = producer.lock() {
+                    let _ = prod.push_slice(&resampled_buffer);
+                }
+            },
+            move |err| {
+                eprintln!("[vc] Input error: {err}. Attempting recovery...");
+                if let Ok(mut lock) = inner_input_err.session.lock() {
+                    if let Some(session) = lock.as_mut() {
+                        let target_device = session.current_input_device.clone();
+                        let _ = session
+                            .update_input_device(target_device, Arc::clone(&inner_input_err));
+                    }
+                }
+            },
+            None,
+        )
+        .map_err(|e| e.to_string())
+}
+
+// Helper to build normalized Output Stream (48kHz Mono -> Device Native Channels & Rate)
+fn build_output_stream(
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    consumer: AudioConsumer,
+    state_inner: Arc<VoiceStateInner>,
+) -> Result<cpal::Stream, String> {
+    let native_sample_rate = config.sample_rate;
+    let channels = config.channels as usize;
+    let mut resampler = LinearResampler::new();
+    let mut raw_mono_samples = Vec::with_capacity(2048);
+    let mut resampled_mono = Vec::with_capacity(2048);
+    let mut last_sample = 0.0f32;
+
+    let inner_output_err = Arc::clone(&state_inner);
+
+    device
+        .build_output_stream(
+            config,
+            move |data: &mut [f32], _| {
+                let required_mono_samples = (data.len() / channels) * TARGET_SAMPLE_RATE as usize
+                    / native_sample_rate as usize;
+
+                raw_mono_samples.clear();
+                resampled_mono.clear();
+
+                if let Ok(mut cons) = consumer.lock() {
+                    for _ in 0..required_mono_samples {
+                        if let Some(s) = cons.try_pop() {
+                            last_sample = s;
+                            raw_mono_samples.push(s);
+                        } else {
+                            // Exponential decay to prevent clicking when underflowing
+                            last_sample *= 0.92;
+                            raw_mono_samples.push(last_sample);
+                        }
+                    }
+                }
+
+                // Resample from 48kHz mono to target native output rate
+                resampler.process(
+                    &raw_mono_samples,
+                    TARGET_SAMPLE_RATE,
+                    native_sample_rate,
+                    &mut resampled_mono,
+                );
+
+                // Interleave mono into hardware channels
+                let mut res_idx = 0;
+                let mut out_idx = 0;
+                while out_idx < data.len() && res_idx < resampled_mono.len() {
+                    let mono_val = resampled_mono[res_idx];
+                    for ch in 0..channels {
+                        if out_idx + ch < data.len() {
+                            data[out_idx + ch] = mono_val;
+                        }
+                    }
+                    out_idx += channels;
+                    res_idx += 1;
+                }
+            },
+            move |err| {
+                eprintln!("[vc] Output error: {err}. Attempting recovery...");
+                if let Ok(mut lock) = inner_output_err.session.lock() {
+                    if let Some(session) = lock.as_mut() {
+                        let target_device = session.current_output_device.clone();
+                        let _ = session
+                            .update_output_device(target_device, Arc::clone(&inner_output_err));
+                    }
+                }
+            },
+            None,
+        )
+        .map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 pub fn list_input_devices() -> Result<Vec<String>, String> {
@@ -191,10 +322,6 @@ pub fn list_output_devices() -> Result<Vec<String>, String> {
         .collect())
 }
 
-// ============================================================================
-// DISCONNECT
-// ============================================================================
-
 #[tauri::command]
 pub fn disconnect_from_vc(voice_state: State<'_, VoiceState>) -> Result<(), String> {
     let mut lock = voice_state
@@ -205,7 +332,6 @@ pub fn disconnect_from_vc(voice_state: State<'_, VoiceState>) -> Result<(), Stri
 
     if let Some(session) = lock.take() {
         session.shutdown.store(true, Ordering::SeqCst);
-
         let _ = session.input_stream.pause();
         if let Ok(output) = session.output_stream.lock() {
             let _ = output.pause();
@@ -215,18 +341,18 @@ pub fn disconnect_from_vc(voice_state: State<'_, VoiceState>) -> Result<(), Stri
     Ok(())
 }
 
-// ============================================================================
-// CONNECT
-// ============================================================================
-
 #[tauri::command]
 pub fn connect_to_vc(
     hostname: String,
     pin: u64,
+    shared_secret: Vec<u8>, // output of js `x25519.getSharedSecret`
     config_state: State<'_, ConfigState>,
     voice_state: State<'_, VoiceState>,
 ) -> Result<(), String> {
     disconnect_from_vc(voice_state.clone())?;
+
+    let key = Key::try_from(shared_secret.as_slice()).map_err(|v| v.to_string())?;
+    let cipher = Arc::new(Mutex::new(SessionCipher::new(ChaCha20Poly1305::new(&key))));
 
     let config = config_state.0.lock().unwrap().clone();
     let state_inner = Arc::clone(&voice_state.inner);
@@ -280,7 +406,7 @@ pub fn connect_to_vc(
 
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // Output Ring Buffer setup
+    // Ring Buffer Setup
     let rb_out = HeapRb::<f32>::new(19200);
     let (producer_out, consumer_out) = rb_out.split();
     let mut producer_out = producer_out;
@@ -302,7 +428,6 @@ pub fn connect_to_vc(
         .map_err(|e| format!("Failed to start output: {e}"))?;
     let output_stream = Arc::new(Mutex::new(output_stream));
 
-    // Input Ring Buffer setup
     let rb_in = HeapRb::<f32>::new(19200);
     let (producer_in, mut consumer_in) = rb_in.split();
     let shared_producer_in = Arc::new(Mutex::new(producer_in));
@@ -312,42 +437,21 @@ pub fn connect_to_vc(
         .map_err(|e| format!("Failed to get default input config: {e}"))?
         .config();
 
-    let cb_producer = Arc::clone(&shared_producer_in);
-    let inner_input_err = Arc::clone(&state_inner);
+    let input_stream = build_input_stream(
+        &input_device,
+        input_config,
+        Arc::clone(&shared_producer_in),
+        Arc::clone(&state_inner),
+    )?;
 
-    let input_stream = input_device
-        .build_input_stream(
-            input_config,
-            move |data: &[f32], _| {
-                if let Ok(mut prod) = cb_producer.lock() {
-                    let _ = prod.push_slice(data);
-                }
-            },
-            move |err| {
-                eprintln!("[vc] Input error: {err}. Attempting input stream recovery...");
-                if let Ok(mut lock) = inner_input_err.session.lock() {
-                    if let Some(session) = lock.as_mut() {
-                        let target_device = session.current_input_device.clone();
-                        if let Err(e) =
-                            session.update_input_device(target_device, Arc::clone(&inner_input_err))
-                        {
-                            eprintln!("[vc] Input recovery failed: {e}");
-                        }
-                    }
-                }
-            },
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-
-    // UDP Sender Thread
+    // Sender Thread
     {
         let input_socket = socket.clone();
         let shutdown = shutdown.clone();
+        let cipher = cipher.clone();
 
         thread::spawn(move || {
             let mut sequence = 0u32;
-            let mut net_packet = vec![0u8; HEADER_SIZE + PACKET_SAMPLES * 2];
             let mut frame_buf = vec![0.0f32; PACKET_SAMPLES];
             let mut hangover_counter = 0;
 
@@ -369,12 +473,20 @@ pub fn connect_to_vc(
                     };
 
                     if is_speaking {
-                        net_packet[0..4].copy_from_slice(&sequence.to_be_bytes());
-                        for (i, sample) in frame_buf.iter().enumerate() {
+                        // sequence goes INSIDE the plaintext now, prefixed before the PCM
+                        let mut plaintext = Vec::with_capacity(4 + PACKET_SAMPLES * 2);
+                        plaintext.extend_from_slice(&sequence.to_be_bytes());
+
+                        for sample in frame_buf.iter() {
                             let pcm = (sample.clamp(-1.0, 1.0) * 32767.0) as i16;
-                            let offset = HEADER_SIZE + i * 2;
-                            net_packet[offset..offset + 2].copy_from_slice(&pcm.to_be_bytes());
+                            plaintext.extend_from_slice(&pcm.to_be_bytes());
                         }
+
+                        let Ok(net_packet) = cipher.lock().unwrap().encrypt(&plaintext) else {
+                            eprintln!("[vc] failed to encrypt outgoing packet");
+                            sequence = sequence.wrapping_add(1);
+                            continue;
+                        };
 
                         let _ = input_socket.send(&net_packet);
                         sequence = sequence.wrapping_add(1);
@@ -386,10 +498,11 @@ pub fn connect_to_vc(
         });
     }
 
-    // UDP Receiver Thread
+    // Receiver Thread
     {
         let socket = socket.clone();
         let shutdown = shutdown.clone();
+        let cipher = cipher.clone();
 
         thread::spawn(move || {
             let mut packets: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
@@ -401,15 +514,25 @@ pub fn connect_to_vc(
 
             while !shutdown.load(Ordering::Relaxed) {
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
-                    if len > HEADER_SIZE {
-                        let seq = u32::from_be_bytes(udp_buffer[0..4].try_into().unwrap());
-                        let pcm = &udp_buffer[HEADER_SIZE..len];
-                        let samples: Vec<f32> = pcm
-                            .chunks_exact(2)
-                            .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
-                            .collect();
+                    match cipher.lock().unwrap().decrypt(&udp_buffer[..len]) {
+                        Ok(plaintext) => {
+                            if plaintext.len() < 4 {
+                                eprintln!("[vc] dropped packet: too short after decrypt");
+                            } else {
+                                let seq = u32::from_be_bytes(plaintext[..4].try_into().unwrap());
+                                let pcm = &plaintext[4..];
 
-                        packets.insert(seq, samples);
+                                let samples: Vec<f32> = pcm
+                                    .chunks_exact(2)
+                                    .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
+                                    .collect();
+
+                                packets.insert(seq, samples);
+                            }
+                        }
+                        Err(_) => {
+                            eprintln!("[vc] dropped packet: decryption failed");
+                        }
                     }
                 }
 
@@ -475,65 +598,6 @@ pub fn connect_to_vc(
     });
 
     Ok(())
-}
-
-// ============================================================================
-// AUDIO CALLBACK
-// ============================================================================
-
-fn build_output_stream(
-    device: &cpal::Device,
-    config: cpal::StreamConfig,
-    consumer: AudioConsumer,
-    state_inner: Arc<VoiceStateInner>,
-) -> Result<cpal::Stream, String> {
-    let channels = config.channels as usize;
-    let mut last_sample = 0.0f32;
-    let inner_output_err = Arc::clone(&state_inner);
-
-    device
-        .build_output_stream(
-            config,
-            move |data: &mut [f32], _| {
-                let mut idx = 0;
-                let mut cons_guard = consumer.lock().ok();
-
-                while idx < data.len() {
-                    let sample = cons_guard.as_mut().and_then(|c| c.try_pop());
-                    if let Some(mono_sample) = sample {
-                        last_sample = mono_sample;
-                        for ch in 0..channels {
-                            data[idx + ch] = mono_sample;
-                        }
-                        idx += channels;
-                    } else {
-                        while idx < data.len() {
-                            last_sample *= 0.92;
-                            for ch in 0..channels {
-                                data[idx + ch] = last_sample;
-                            }
-                            idx += channels;
-                        }
-                        break;
-                    }
-                }
-            },
-            move |err| {
-                eprintln!("[vc] Output error: {err}. Attempting output stream recovery...");
-                if let Ok(mut lock) = inner_output_err.session.lock() {
-                    if let Some(session) = lock.as_mut() {
-                        let target_device = session.current_output_device.clone();
-                        if let Err(e) = session
-                            .update_output_device(target_device, Arc::clone(&inner_output_err))
-                        {
-                            eprintln!("[vc] Output recovery failed: {e}");
-                        }
-                    }
-                }
-            },
-            None,
-        )
-        .map_err(|e| e.to_string())
 }
 
 impl Drop for VoiceSession {

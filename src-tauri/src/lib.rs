@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use crate::commands::config::ConfigState;
 
 pub mod commands;
+pub mod crypto;
 pub mod types;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

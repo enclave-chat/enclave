@@ -4,6 +4,7 @@ import EnclaveWebSocket from "./ws";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { getWSUrl } from "@/lib/serverList";
 import { ClientMeta, ServerMeta, StoredMessage } from "@/lib/types";
+import { ed25519 } from "@noble/curves/ed25519.js";
 
 ed.hashes.sha512 = sha512;
 
@@ -36,6 +37,7 @@ export default class EnclaveServer {
   public voiceJoin?: (pin: bigint, channelId: string) => void;
   public voiceChatUsers: Record<string, string[]>;
   public voiceChatSpeakers: Record<string, NodeJS.Timeout>;
+  public voiceChannelId?: string;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;
@@ -57,6 +59,7 @@ export default class EnclaveServer {
   ) {
     this.websocket = new EnclaveWebSocket(
       getWSUrl(this.hostname, this.isSecure),
+      ed25519.utils.toMontgomerySecret(clientSecretKey),
     );
 
     const publicKeyString = base58.encode(clientPublicKey);

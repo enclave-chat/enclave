@@ -12,7 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { PlusIcon } from "lucide-react";
+import { Info, PlusIcon } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 // hostname[:port][/path] — explicitly no protocol/scheme allowed
 const HOSTNAME_PATTERN =
@@ -38,7 +39,7 @@ type AddServerDialogProps = {
 export function AddServerDialog({ onAdd }: AddServerDialogProps) {
   const [open, setOpen] = useState(false);
   const [hostname, setHostname] = useState("");
-  const [isSecure, setIsSecure] = useState(true);
+  const [isSecure, setIsSecure] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -106,9 +107,24 @@ export function AddServerDialog({ onAdd }: AddServerDialogProps) {
           </div>
 
           <div className="flex items-center justify-between">
-            <Label htmlFor="secure-toggle" className="flex flex-col gap-1">
-              Secure connection
-            </Label>
+            <Tooltip>
+              <TooltipTrigger>
+                <Label
+                  htmlFor="secure-toggle"
+                  className="flex items-center gap-1 cursor-help"
+                >
+                  TLS
+                  <Info className="h-3.5 w-3.5 text-muted-foreground" />
+                </Label>
+              </TooltipTrigger>
+
+              <TooltipContent>
+                <p className="max-w-xs">
+                  TLS is not recommended because there is a encryption layer
+                  already built in to Enclave
+                </p>
+              </TooltipContent>
+            </Tooltip>
             <Switch
               id="secure-toggle"
               checked={isSecure}
