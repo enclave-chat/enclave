@@ -170,6 +170,8 @@ export default class Enclave<P = Page> {
 
     if (!server || channel.kind !== "voice") return;
 
+    if (server.voiceChannelId) this.leaveVoice();
+
     server.voiceJoin = (pin, channelId) => {
       invoke("connect_to_vc", {
         hostname: server.hostname,
@@ -177,14 +179,12 @@ export default class Enclave<P = Page> {
         sharedSecret: server.websocket?.sharedSecret,
       })
         .then(() => {
-          server.isInVoiceChat = true;
           server.voiceChannelId = channelId;
           this.forceRender();
         })
         .catch(console.error);
     };
 
-    server.isInVoiceChat = true;
     server.voiceChannelId = channel.id;
 
     server.websocket?.send({ method: "JoinVoice", channel_id: channel.id });
@@ -195,12 +195,11 @@ export default class Enclave<P = Page> {
   public leaveVoice() {
     const server = this.server;
 
-    if (!server || !server.isInVoiceChat) return;
+    if (!server || !server.voiceChannelId) return;
 
     server.websocket?.send({ method: "LeaveVoice" });
     invoke("disconnect_from_vc").catch(console.error);
 
-    server.isInVoiceChat = false;
     server.voiceChannelId = undefined;
     server.voiceChatSpeakers = {};
 

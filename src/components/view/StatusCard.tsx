@@ -39,7 +39,7 @@ export default function StatusCard({
   return (
     <div className="absolute -left-16 right-16 bottom-0 w-[calc(100%+4rem-2rem)] z-10 ml-4 mb-4 @max-[150px]:hidden">
       <Card className="px-3 py-3 h-full w-full flex flex-col gap-0.5">
-        {server?.isInVoiceChat && voiceChannel && (
+        {voiceChannel && (
           <div className="text-emerald-500 flex flex-row items-center gap-2 border-b pb-2.5">
             <Signal className="h-5" />
             <div className="flex flex-col">

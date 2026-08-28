@@ -17,7 +17,6 @@ export default class EnclaveWebSocket {
   onOpenQueue: Array<() => void>;
 
   private sendCounter = 0n;
-  private recvCounter = 0n;
   public sharedSecret: Uint8Array | null = null;
 
   private readonly handshakeReady: Promise<void>;
@@ -75,14 +74,6 @@ export default class EnclaveWebSocket {
     view.setBigUint64(0, this.sendCounter, false); // big-endian, first 8 bytes
     nonce[11] |= 0b1000_0000; // distinguishes client-send from server-send direction
     this.sendCounter += 1n;
-    return nonce;
-  }
-
-  private nextRecvNonce(): Uint8Array {
-    const nonce = new Uint8Array(12);
-    const view = new DataView(nonce.buffer);
-    view.setBigUint64(0, this.recvCounter, false);
-    this.recvCounter += 1n;
     return nonce;
   }
 
