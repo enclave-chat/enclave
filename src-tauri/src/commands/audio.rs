@@ -358,7 +358,16 @@ where
                         }
                     }
                 }
-                if callback_count % 200 == 0 {
+                if underflow_count < required_mono_samples && callback_count % 100 == 0 {
+                    eprintln!(
+                        "[vc] output: PLAYING, got {}/{} mono samples, peak {:.4}",
+                        required_mono_samples - underflow_count,
+                        required_mono_samples,
+                        raw_mono_samples
+                            .iter()
+                            .fold(0.0f32, |a, &b| a.max(b.abs()))
+                    );
+                } else if callback_count % 200 == 0 {
                     eprintln!(
                         "[vc] output: got {}/{} mono samples ({} underflow)",
                         required_mono_samples - underflow_count,
@@ -709,6 +718,8 @@ pub fn connect_to_vc(
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
             let mut next_frame_time = Instant::now();
             let mut recv_count: u64 = 0;
+            let mut push_count: u64 = 0;
+            let mut decrypt_fail: u64 = 0;
             let mut loop_count: u64 = 0;
 
             while !shutdown.load(Ordering::Relaxed) {
@@ -718,7 +729,7 @@ pub fn connect_to_vc(
                     match cipher.lock().unwrap().decrypt(&udp_buffer[..len]) {
                         Ok(plaintext) => {
                             if plaintext.len() < 4 {
-                                eprintln!("[vc] dropped packet: too short after decrypt");
+                                eprintln!("[vc] dropped packet: too short after decrypt ({len} bytes)");
                             } else {
                                 let seq = u32::from_be_bytes(plaintext[..4].try_into().unwrap());
                                 let pcm = &plaintext[4..];
@@ -728,18 +739,30 @@ pub fn connect_to_vc(
                                     .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
                                     .collect();
 
+                                if samples.len() != PACKET_SAMPLES {
+                                    eprintln!(
+                                        "[vc] receiver: packet {len} bytes, seq {seq}, got {} samples (expected {PACKET_SAMPLES})",
+                                        samples.len()
+                                    );
+                                }
+
                                 packets.insert(seq, samples);
                             }
                         }
-                        Err(_) => {
-                            eprintln!("[vc] dropped packet: decryption failed");
+                        Err(e) => {
+                            decrypt_fail += 1;
+                            if decrypt_fail <= 5 || decrypt_fail % 50 == 0 {
+                                eprintln!(
+                                    "[vc] dropped packet: decryption failed ({decrypt_fail} total, {len} bytes, {e})"
+                                );
+                            }
                         }
                     }
                 }
 
-                if loop_count % 2000 == 0 {
+                if loop_count % 1000 == 0 {
                     eprintln!(
-                        "[vc] receiver: received {recv_count} packets total, {} buffered, prebuffering {is_prebuffering}, expected {expected:?}",
+                        "[vc] receiver: recv {recv_count}, decrypt-fail {decrypt_fail}, buffered {}, prebuffer {is_prebuffering}, expected {expected:?}, pushed {push_count}",
                         packets.len()
                     );
                 }
@@ -749,6 +772,9 @@ pub fn connect_to_vc(
                         expected = packets.keys().next().copied();
                         is_prebuffering = false;
                         next_frame_time = Instant::now();
+                        eprintln!(
+                            "[vc] receiver: prebuffer done, starting at seq {expected:?} ({recv_count} packets received)"
+                        );
                     } else {
                         thread::sleep(Duration::from_millis(1));
                         continue;
@@ -758,6 +784,7 @@ pub fn connect_to_vc(
                 if Instant::now() >= next_frame_time {
                     if let Some(seq) = expected {
                         if let Some(samples) = packets.remove(&seq) {
+                            let peak = samples.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
                             if samples.len() == PACKET_SAMPLES {
                                 last_good_frame.copy_from_slice(&samples);
                             } else {
@@ -768,14 +795,20 @@ pub fn connect_to_vc(
                                     last_good_frame.resize(PACKET_SAMPLES, 0.0);
                                 }
                             }
-
                             let _ = producer_out.push_slice(&last_good_frame);
+                            push_count += 1;
+                            if push_count == 1 || push_count % 300 == 0 {
+                                eprintln!(
+                                    "[vc] receiver: playing seq {seq}, peak {peak:.4}, pushed {push_count}"
+                                );
+                            }
                             expected = Some(seq.wrapping_add(1));
                         } else if packets.keys().any(|&x| x > seq) {
                             for sample in last_good_frame.iter_mut() {
                                 *sample *= 0.65;
                             }
                             let _ = producer_out.push_slice(&last_good_frame);
+                            push_count += 1;
                             expected = Some(seq.wrapping_add(1));
                         } else if packets.is_empty() {
                             is_prebuffering = true;
