@@ -37,7 +37,7 @@ export default class Enclave<P = Page> {
   public config?: Config;
 
   public constructor() {
-    this.serverList = {};
+    this.serverList = [];
     this.forceRender = () => {};
     this.isSettingsOpen = false;
   }
@@ -113,13 +113,17 @@ export default class Enclave<P = Page> {
       return;
     }
 
+    const serveridx = this.serverList.findIndex((server) => {
+      server.hostname === hostname;
+    });
+
     if (
-      this.serverList[hostname] &&
-      this.serverList[hostname].publicKey !==
+      this.serverList[serveridx] &&
+      this.serverList[serveridx].publicKey !==
         base58.encode(this.server.serverPublicKey)
     ) {
       console.error("Server's new public key doesn't match old one", {
-        old: this.serverList[hostname].publicKey,
+        old: this.serverList[serveridx].publicKey,
         new: base58.encode(this.server.serverPublicKey),
       });
       return;
@@ -156,11 +160,18 @@ export default class Enclave<P = Page> {
 
     this.server.meta = metaResponse.data as any;
 
-    this.serverList[hostname] = {
-      meta: metaResponse.data as any,
-      isSecure,
+    const serverItem = {
+      hostname,
       publicKey: base58.encode(this.server.serverPublicKey),
+      isSecure,
+      meta: metaResponse.data as any,
     };
+
+    if (this.serverList[serveridx]) {
+      this.serverList[serveridx] = serverItem;
+    } else {
+      this.serverList.push(serverItem);
+    }
 
     this.forceRender();
   }
