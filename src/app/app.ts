@@ -11,7 +11,7 @@ import { Channel } from "@/lib/types";
 import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod } from "./protocol";
 import { BackendConfig, Config, getConfig } from "@/lib/config";
-import { playJoin, playLeave } from "@/lib/soundEffects";
+import * as sfx from "@/lib/soundEffects";
 
 ed.hashes.sha512 = sha512;
 
@@ -222,7 +222,7 @@ export default class Enclave<P = Page> {
 
     this.forceRender();
 
-    playLeave();
+    sfx.playLeave();
   }
 
   public async onMessage(msg: ClientMethod) {
@@ -243,13 +243,27 @@ export default class Enclave<P = Page> {
         return;
 
       case "Messages":
+        const currentTimestamp = Date.now();
+        let shouldPlaySfx = false;
+
         const authors = Object.entries(msg.messages).flatMap(
           ([channelId, messages]) => {
             if (!server.messages[channelId]) {
               server.messages[channelId] = {};
             }
 
+            const page = this.page as Page | undefined;
+
+            const isInvisibleChannel = page?.channel.id !== channelId;
+
             return messages.map((message) => {
+              if (
+                Math.abs(currentTimestamp - message.timestamp) < 1000 &&
+                (isInvisibleChannel || document.visibilityState === "hidden")
+              ) {
+                shouldPlaySfx = true;
+              }
+
               server.messages[channelId][message.id] = message;
               return message.author;
             });
@@ -261,6 +275,8 @@ export default class Enclave<P = Page> {
         this.server?.getUsers(dedupedAuthors);
 
         this.forceRender();
+
+        if (shouldPlaySfx) sfx.playMessage();
 
         return;
 
@@ -295,7 +311,7 @@ export default class Enclave<P = Page> {
         this.server?.getUsers([msg.pubkey]);
 
         if (msg.channel_id === this.server?.voiceChannelId) {
-          playJoin();
+          sfx.playJoin();
         }
 
         return;
@@ -310,7 +326,7 @@ export default class Enclave<P = Page> {
         this.forceRender();
 
         if (msg.channel_id === this.server?.voiceChannelId) {
-          playLeave();
+          sfx.playLeave();
         }
 
         return;
