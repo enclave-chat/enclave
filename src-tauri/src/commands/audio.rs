@@ -717,7 +717,6 @@ pub fn connect_to_vc(
             let mut last_good_frame = vec![0.0f32; PACKET_SAMPLES];
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
             let mut next_frame_time = Instant::now();
-            let mut last_recv_time = Instant::now();
             let mut recv_count: u64 = 0;
             let mut push_count: u64 = 0;
             let mut decrypt_fail: u64 = 0;
@@ -727,7 +726,6 @@ pub fn connect_to_vc(
                 loop_count += 1;
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
                     recv_count += 1;
-                    last_recv_time = Instant::now();
                     match cipher.lock().unwrap().decrypt(&udp_buffer[..len]) {
                         Ok(plaintext) => {
                             if plaintext.len() < 4 {
@@ -769,32 +767,6 @@ pub fn connect_to_vc(
                     );
                 }
 
-                // Re-sync to the freshest stream only after a genuine stall
-                // (no packet for a while), not on a momentary empty buffer.
-                if expected.is_some() && !is_prebuffering && !packets.is_empty()
-                    && last_recv_time.elapsed() < Duration::from_millis(300)
-                    && packets.keys().rev().next().map_or(false, |&newest| {
-                        expected
-                            .map(|e| newest.wrapping_sub(e) > 3000)
-                            .unwrap_or(false)
-                    })
-                {
-                    eprintln!(
-                        "[vc] receiver: stream advanced too far, resyncing expect {expected:?} -> newest buffer"
-                    );
-                    expected = packets.keys().rev().next().copied();
-                }
-
-                // Only start prebuffering from scratch when the stream truly dried up.
-                if expected.is_some()
-                    && !is_prebuffering
-                    && last_recv_time.elapsed() > Duration::from_millis(500)
-                {
-                    eprintln!("[vc] receiver: stream stalled, re-prebuffering");
-                    is_prebuffering = true;
-                    expected = None;
-                }
-
                 if is_prebuffering {
                     if packets.len() >= INITIAL_PACKET_CUSHION {
                         expected = packets.keys().next().copied();
@@ -831,17 +803,15 @@ pub fn connect_to_vc(
                                 );
                             }
                             expected = Some(seq.wrapping_add(1));
-                        } else {
-                            // Expected packet not here yet OR skipped (gap). Always
-                            // advance the clock and keep playing (repeat/decay the
-                            // last good frame) so the stream stays continuous. Never
-                            // reset to prebuffer here.
+                        } else if packets.keys().any(|&x| x > seq) {
                             for sample in last_good_frame.iter_mut() {
                                 *sample *= 0.65;
                             }
                             let _ = producer_out.push_slice(&last_good_frame);
                             push_count += 1;
                             expected = Some(seq.wrapping_add(1));
+                        } else if packets.is_empty() {
+                            is_prebuffering = true;
                         }
                     }
                     next_frame_time += Duration::from_millis(20);
