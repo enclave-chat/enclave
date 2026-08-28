@@ -1,11 +1,9 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "../PageView";
-import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Phone, PhoneOff } from "lucide-react";
+import { Phone } from "lucide-react";
 
 export default function VoiceChannel({
   appRef,
@@ -15,50 +13,9 @@ export default function VoiceChannel({
   const channel = appRef.current?.page?.channel;
   if (!channel) return null;
 
-  const [isConnected, setIsConnected] = useState(false);
-  const lastChannelId = useRef<string | null>(null);
-
-  // Leave current channel setup
-  const handleLeave = () => {
-    appRef.current?.server?.websocket?.send({ method: "LeaveVoice" });
-    invoke("disconnect_from_vc").catch(console.error);
-    setIsConnected(false);
-  };
-
-  // Explicit action to join the voice channel
-  const handleJoin = () => {
-    const hostname = appRef.current?.server?.hostname;
-    if (!hostname || channel.kind !== "voice" || !appRef.current?.server)
-      return;
-
-    appRef.current.server.voiceJoin = (pin, channelId) => {
-      invoke("connect_to_vc", { hostname, pin, channelId })
-        .then(() => setIsConnected(true))
-        .catch(console.error);
-    };
-
-    appRef.current.server.websocket?.send({
-      method: "JoinVoice",
-      channel_id: channel.id,
-    });
-
-    setIsConnected(true);
-  };
-
-  // Clean up when channel changes or component unmounts
-  useEffect(() => {
-    if (lastChannelId.current !== channel.id) {
-      if (isConnected) {
-        invoke("disconnect_from_vc").catch(console.error);
-        setIsConnected(false);
-      }
-      lastChannelId.current = channel.id;
-    }
-
-    return () => {
-      invoke("disconnect_from_vc").catch(console.error);
-    };
-  }, [channel.id]);
+  const isConnected =
+    appRef.current?.server?.isInVoiceChat &&
+    appRef.current.server.voiceChannelId === channel.id;
 
   const speakers =
     appRef.current?.server?.voiceChatSpeakers &&
@@ -141,27 +98,18 @@ export default function VoiceChannel({
       </div>
 
       {/* Bottom Control Bar */}
-      <footer className="flex items-center justify-center px-4 py-2 border-t border-border/40 bg-card/50 rounded-xl mx-2">
-        {isConnected ? (
-          <Button
-            variant="destructive"
-            onClick={handleLeave}
-            className="flex items-center gap-2 font-medium px-6"
-          >
-            <PhoneOff className="w-4 h-4" />
-            Disconnect
-          </Button>
-        ) : (
+      {!isConnected && (
+        <footer className="flex items-center justify-center px-4 py-2 border-t border-border/40 bg-card/50 rounded-xl mx-2">
           <Button
             variant="default"
-            onClick={handleJoin}
+            onClick={() => appRef.current?.joinVoice(channel)}
             className="flex items-center gap-2 font-medium px-6 bg-emerald-600 hover:bg-emerald-700 text-white"
           >
             <Phone className="w-4 h-4" />
             Join Voice
           </Button>
-        )}
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

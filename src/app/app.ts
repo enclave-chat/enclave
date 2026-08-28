@@ -7,6 +7,8 @@ import { base58 } from "@scure/base";
 import axios from "axios";
 import { Account, AccountsFile, getAccounts } from "@/lib/accounts";
 import { Page } from "@/components/page/PageView";
+import { Channel } from "@/lib/types";
+import { invoke } from "@tauri-apps/api/core";
 import { ClientMethod } from "./protocol";
 import { Config, getConfig } from "@/lib/config";
 
@@ -148,6 +150,44 @@ export default class Enclave<P = Page> {
       isSecure,
       publicKey: base58.encode(this.server.serverPublicKey),
     };
+
+    this.forceRender();
+  }
+
+  public joinVoice(channel: Channel) {
+    const server = this.server;
+
+    if (!server || channel.kind !== "voice") return;
+
+    server.voiceJoin = (pin, channelId) => {
+      invoke("connect_to_vc", { hostname: server.hostname, pin, channelId })
+        .then(() => {
+          server.isInVoiceChat = true;
+          server.voiceChannelId = channelId;
+          this.forceRender();
+        })
+        .catch(console.error);
+    };
+
+    server.isInVoiceChat = true;
+    server.voiceChannelId = channel.id;
+
+    server.websocket?.send({ method: "JoinVoice", channel_id: channel.id });
+
+    this.forceRender();
+  }
+
+  public leaveVoice() {
+    const server = this.server;
+
+    if (!server || !server.isInVoiceChat) return;
+
+    server.websocket?.send({ method: "LeaveVoice" });
+    invoke("disconnect_from_vc").catch(console.error);
+
+    server.isInVoiceChat = false;
+    server.voiceChannelId = undefined;
+    server.voiceChatSpeakers = {};
 
     this.forceRender();
   }

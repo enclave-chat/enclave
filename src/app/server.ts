@@ -36,6 +36,8 @@ export default class EnclaveServer {
   public voiceJoin?: (pin: bigint, channelId: string) => void;
   public voiceChatUsers: Record<string, string[]>;
   public voiceChatSpeakers: Record<string, NodeJS.Timeout>;
+  public isInVoiceChat: boolean;
+  public voiceChannelId?: string;
 
   public constructor(hostname: string, isSecure: boolean) {
     this.hostname = hostname;
@@ -44,6 +46,7 @@ export default class EnclaveServer {
     this.users = {};
     this.voiceChatUsers = {};
     this.voiceChatSpeakers = {};
+    this.isInVoiceChat = false;
   }
 
   public disconnect() {
