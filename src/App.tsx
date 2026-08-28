@@ -11,6 +11,7 @@ import Sidebar from "./components/view/Sidebar";
 import { ThemeProvider } from "next-themes";
 import Page from "./components/page/PageView";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
+import { TooltipProvider } from "./components/ui/tooltip";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);
@@ -31,35 +32,40 @@ export default function App() {
 
   return (
     <ThemeProvider attribute="class" defaultTheme="system">
-      <main className="size-screen flex select-none cursor-default">
-        {appRef.current?.accounts &&
-        appRef.current.accounts.accounts.length === 0 ? (
-          <NewProfilePage appRef={appRef} />
-        ) : (
-          <>
-            <ResizablePanelGroup orientation="horizontal" className="h-screen">
-              <ResizablePanel
-                defaultSize="600px"
-                maxSize="400px"
-                minSize="4rem"
-                groupResizeBehavior="preserve-pixel-size"
+      <TooltipProvider>
+        <main className="size-screen flex select-none cursor-default">
+          {appRef.current?.accounts &&
+          appRef.current.accounts.accounts.length === 0 ? (
+            <NewProfilePage appRef={appRef} />
+          ) : (
+            <>
+              <ResizablePanelGroup
+                orientation="horizontal"
+                className="h-screen"
               >
-                <div className="flex">
-                  <ServerList appRef={appRef} />
-                  <Sidebar appRef={appRef} />
-                </div>
-              </ResizablePanel>
-              <ResizableHandle withHandle />
+                <ResizablePanel
+                  defaultSize="600px"
+                  maxSize="400px"
+                  minSize="4rem"
+                  groupResizeBehavior="preserve-pixel-size"
+                >
+                  <div className="flex">
+                    <ServerList appRef={appRef} />
+                    <Sidebar appRef={appRef} />
+                  </div>
+                </ResizablePanel>
+                <ResizableHandle withHandle />
 
-              <ResizablePanel defaultSize="100%">
-                <Page appRef={appRef} />
-              </ResizablePanel>
-            </ResizablePanelGroup>
+                <ResizablePanel defaultSize="100%">
+                  <Page appRef={appRef} />
+                </ResizablePanel>
+              </ResizablePanelGroup>
 
-            <SettingsDialog appRef={appRef} />
-          </>
-        )}
-      </main>
+              <SettingsDialog appRef={appRef} />
+            </>
+          )}
+        </main>
+      </TooltipProvider>
     </ThemeProvider>
   );
 }
