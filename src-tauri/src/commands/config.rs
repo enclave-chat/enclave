@@ -58,14 +58,14 @@ pub fn update_config(
     };
 
     if state_lock.input_device_name != config.input_device_name {
-        sesh.update_input_device(
+        sesh.setup_input(
             state_lock.input_device_name.clone(),
             voice_state.inner.clone(),
         )?;
     }
 
     if state_lock.output_device_name != config.output_device_name {
-        sesh.update_output_device(
+        sesh.setup_output(
             state_lock.output_device_name.clone(),
             voice_state.inner.clone(),
         )?;
