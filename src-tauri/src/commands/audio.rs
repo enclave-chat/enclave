@@ -46,8 +46,8 @@ pub struct VoiceStateInner {
 }
 
 pub struct VoiceSession {
-    pub input_stream: cpal::Stream,
-    pub output_stream: Arc<Mutex<cpal::Stream>>,
+    pub input_stream: Mutex<Option<cpal::Stream>>,
+    pub output_stream: Arc<Mutex<Option<cpal::Stream>>>,
     pub socket: Arc<UdpSocket>,
     pub pin: u64,
     pub shutdown: Arc<AtomicBool>,
@@ -57,6 +57,44 @@ pub struct VoiceSession {
 
     pub producer_in: AudioProducer,
     pub consumer_out: AudioConsumer,
+}
+
+fn resolve_input_device(device_name: &Option<String>) -> Result<cpal::Device, String> {
+    let host = cpal::default_host();
+    match device_name {
+        Some(name) => host
+            .input_devices()
+            .map_err(|e| format!("Failed to enumerate input devices: {e}"))?
+            .find(|d| {
+                d.description()
+                    .ok()
+                    .map(|x| x.name() == *name)
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| format!("Input device not found: {name}")),
+        None => host.default_input_device().ok_or_else(|| {
+            format!("No default input device")
+        }),
+    }
+}
+
+fn resolve_output_device(device_name: &Option<String>) -> Result<cpal::Device, String> {
+    let host = cpal::default_host();
+    match device_name {
+        Some(name) => host
+            .output_devices()
+            .map_err(|e| format!("Failed to enumerate output devices: {e}"))?
+            .find(|d| {
+                d.description()
+                    .ok()
+                    .map(|x| x.name() == *name)
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| format!("Output device not found: {name}")),
+        None => host.default_output_device().ok_or_else(|| {
+            format!("No default output device")
+        }),
+    }
 }
 
 // Simple Linear Resampler for real-time audio conversion
@@ -93,71 +131,60 @@ impl LinearResampler {
 }
 
 impl VoiceSession {
-    pub fn update_input_device(
+    // Single code path for (re)initializing the input stream. Used both for the
+    // initial connect and for changing/recovering the device.
+    pub fn setup_input(
         &mut self,
         device_name: Option<String>,
         state_inner: Arc<VoiceStateInner>,
     ) -> Result<(), String> {
-        let host = cpal::default_host();
-        let device = match &device_name {
-            Some(name) => host
-                .input_devices()
-                .map_err(|e| e.to_string())?
-                .find(|d| {
-                    d.description()
-                        .ok()
-                        .map(|x| x.name() == *name)
-                        .unwrap_or(false)
-                })
-                .ok_or_else(|| format!("Input device '{name}' not found"))?,
-            None => host
-                .default_input_device()
-                .ok_or("No default input device")?,
-        };
+        let device = resolve_input_device(&device_name)?;
 
         let input_config = device
             .default_input_config()
-            .map_err(|e| format!("Failed to get default input config: {e}"))?
+            .map_err(|e| format!("Failed to get input config: {e}"))?
             .config();
+
+        eprintln!(
+            "[vc] Input device {:?} config: {} Hz, {} ch",
+            device.description().map(|d| d.name().to_string()),
+            input_config.sample_rate,
+            input_config.channels
+        );
 
         let producer = Arc::clone(&self.producer_in);
         let new_stream = build_input_stream(&device, input_config, producer, state_inner)?;
-
         new_stream
             .play()
             .map_err(|e| format!("Failed to play input stream: {e}"))?;
 
-        self.input_stream = new_stream;
+        if let Ok(mut slot) = self.input_stream.lock() {
+            *slot = Some(new_stream);
+        }
         self.current_input_device = device_name;
         Ok(())
     }
 
-    pub fn update_output_device(
+    // Single code path for (re)initializing the output stream. Used both for the
+    // initial connect and for changing/recovering the device.
+    pub fn setup_output(
         &mut self,
         device_name: Option<String>,
         state_inner: Arc<VoiceStateInner>,
     ) -> Result<(), String> {
-        let host = cpal::default_host();
-        let device = match &device_name {
-            Some(name) => host
-                .output_devices()
-                .map_err(|e| e.to_string())?
-                .find(|d| {
-                    d.description()
-                        .ok()
-                        .map(|x| x.name() == *name)
-                        .unwrap_or(false)
-                })
-                .ok_or_else(|| format!("Output device '{name}' not found"))?,
-            None => host
-                .default_output_device()
-                .ok_or("No default output device")?,
-        };
+        let device = resolve_output_device(&device_name)?;
 
         let output_config = device
             .default_output_config()
-            .map_err(|e| format!("Failed to get default output config: {e}"))?
+            .map_err(|e| format!("Failed to get output config: {e}"))?
             .config();
+
+        eprintln!(
+            "[vc] Output device {:?} config: {} Hz, {} ch",
+            device.description().map(|d| d.name().to_string()),
+            output_config.sample_rate,
+            output_config.channels
+        );
 
         let consumer = Arc::clone(&self.consumer_out);
         let new_stream = build_output_stream(&device, output_config, consumer, state_inner)?;
@@ -165,10 +192,9 @@ impl VoiceSession {
             .play()
             .map_err(|e| format!("Failed to play output stream: {e}"))?;
 
-        if let Ok(mut active_stream) = self.output_stream.lock() {
-            *active_stream = new_stream;
+        if let Ok(mut slot) = self.output_stream.lock() {
+            *slot = Some(new_stream);
         }
-
         self.current_output_device = device_name;
         Ok(())
     }
@@ -271,7 +297,7 @@ where
                             return;
                         }
                         let target_device = session.current_input_device.clone();
-                        let _ = session.update_input_device(target_device, Arc::clone(&rec));
+                        let _ = session.setup_input(target_device, Arc::clone(&rec));
                     }
                 });
             },
@@ -358,16 +384,7 @@ where
                         }
                     }
                 }
-                if underflow_count < required_mono_samples && callback_count % 100 == 0 {
-                    eprintln!(
-                        "[vc] output: PLAYING, got {}/{} mono samples, peak {:.4}",
-                        required_mono_samples - underflow_count,
-                        required_mono_samples,
-                        raw_mono_samples
-                            .iter()
-                            .fold(0.0f32, |a, &b| a.max(b.abs()))
-                    );
-                } else if callback_count % 200 == 0 {
+                if callback_count % 200 == 0 {
                     eprintln!(
                         "[vc] output: got {}/{} mono samples ({} underflow)",
                         required_mono_samples - underflow_count,
@@ -411,7 +428,7 @@ where
                             return;
                         }
                         let target_device = session.current_output_device.clone();
-                        let _ = session.update_output_device(target_device, Arc::clone(&rec));
+                        let _ = session.setup_output(target_device, Arc::clone(&rec));
                     }
                 });
             },
@@ -453,9 +470,15 @@ pub fn disconnect_from_vc(voice_state: State<'_, VoiceState>) -> Result<(), Stri
 
     if let Some(session) = session {
         session.shutdown.store(true, Ordering::SeqCst);
-        let _ = session.input_stream.pause();
+        if let Ok(input) = session.input_stream.lock() {
+            if let Some(stream) = input.as_ref() {
+                let _ = stream.pause();
+            }
+        }
         if let Ok(output) = session.output_stream.lock() {
-            let _ = output.pause();
+            if let Some(stream) = output.as_ref() {
+                let _ = stream.pause();
+            }
         }
         eprintln!("[vc] disconnected and paused streams");
     }
@@ -515,111 +538,33 @@ pub fn connect_to_vc(
         return Err(msg);
     }
 
-    let host = cpal::default_host();
-
-    let input_device = match &config.input_device_name {
-        Some(name) => host
-            .input_devices()
-            .map_err(|e| {
-                let msg = e.to_string();
-                eprintln!("[vc] failed to enumerate input devices: {msg}");
-                msg
-            })?
-            .find(|d| {
-                d.description()
-                    .ok()
-                    .map(|x| x.name() == *name)
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| {
-                let msg = format!("Input device not found: {name}");
-                eprintln!("[vc] {msg}");
-                msg
-            })?,
-        None => host.default_input_device().ok_or_else(|| {
-            let msg = "No default input device".to_string();
-            eprintln!("[vc] {msg}");
-            msg
-        })?,
-    };
-
-    let output_device = match &config.output_device_name {
-        Some(name) => host
-            .output_devices()
-            .map_err(|e| {
-                let msg = e.to_string();
-                eprintln!("[vc] failed to enumerate output devices: {msg}");
-                msg
-            })?
-            .find(|d| {
-                d.description()
-                    .ok()
-                    .map(|x| x.name() == *name)
-                    .unwrap_or(false)
-            })
-            .ok_or_else(|| {
-                let msg = format!("Output device not found: {name}");
-                eprintln!("[vc] {msg}");
-                msg
-            })?,
-        None => host.default_output_device().ok_or_else(|| {
-            let msg = "No default output device".to_string();
-            eprintln!("[vc] {msg}");
-            msg
-        })?,
-    };
-
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    // Ring Buffer Setup
+    // Ring Buffers (device-agnostic; shared between initial setup and any rebuild)
     let rb_out = HeapRb::<f32>::new(19200);
-    let (producer_out, consumer_out) = rb_out.split();
-    let mut producer_out = producer_out;
+    let (mut producer_out, consumer_out) = rb_out.split();
     let shared_consumer_out = Arc::new(Mutex::new(consumer_out));
-
-    let output_config = output_device
-        .default_output_config()
-        .map_err(|e| format!("Failed to get default output config: {e}"))?
-        .config();
-
-    eprintln!(
-        "[vc] Output device {:?} config: {} Hz, {} ch",
-        output_device.description().map(|d| d.name().to_string()),
-        output_config.sample_rate,
-        output_config.channels
-    );
-    let output_stream = build_output_stream(
-        &output_device,
-        output_config,
-        Arc::clone(&shared_consumer_out),
-        Arc::clone(&state_inner),
-    )?;
-    output_stream
-        .play()
-        .map_err(|e| format!("Failed to start output: {e}"))?;
-    let output_stream = Arc::new(Mutex::new(output_stream));
 
     let rb_in = HeapRb::<f32>::new(19200);
     let (producer_in, mut consumer_in) = rb_in.split();
     let shared_producer_in = Arc::new(Mutex::new(producer_in));
 
-    let input_config = input_device
-        .default_input_config()
-        .map_err(|e| format!("Failed to get default input config: {e}"))?
-        .config();
+    // Build the session with empty stream slots, then (re)initialize the actual
+    // device streams through the same setup path used by device changes.
+    let mut session = VoiceSession {
+        input_stream: Mutex::new(None),
+        output_stream: Arc::new(Mutex::new(None)),
+        socket: socket.clone(),
+        pin,
+        shutdown: shutdown.clone(),
+        current_input_device: config.input_device_name.clone(),
+        current_output_device: config.output_device_name.clone(),
+        producer_in: Arc::clone(&shared_producer_in),
+        consumer_out: Arc::clone(&shared_consumer_out),
+    };
 
-    eprintln!(
-        "[vc] Input device {:?} config: {} Hz, {} ch",
-        input_device.description().map(|d| d.name().to_string()),
-        input_config.sample_rate,
-        input_config.channels
-    );
-    let input_stream = build_input_stream(
-        &input_device,
-        input_config,
-        Arc::clone(&shared_producer_in),
-        Arc::clone(&state_inner),
-    )?;
+    session.setup_input(config.input_device_name.clone(), Arc::clone(&state_inner))?;
+    session.setup_output(config.output_device_name.clone(), Arc::clone(&state_inner))?;
 
     // Sender Thread
     {
@@ -717,21 +662,17 @@ pub fn connect_to_vc(
             let mut last_good_frame = vec![0.0f32; PACKET_SAMPLES];
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
             let mut next_frame_time = Instant::now();
-            let mut last_recv_time = Instant::now();
             let mut recv_count: u64 = 0;
-            let mut push_count: u64 = 0;
-            let mut decrypt_fail: u64 = 0;
             let mut loop_count: u64 = 0;
 
             while !shutdown.load(Ordering::Relaxed) {
                 loop_count += 1;
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
                     recv_count += 1;
-                    last_recv_time = Instant::now();
                     match cipher.lock().unwrap().decrypt(&udp_buffer[..len]) {
                         Ok(plaintext) => {
                             if plaintext.len() < 4 {
-                                eprintln!("[vc] dropped packet: too short after decrypt ({len} bytes)");
+                                eprintln!("[vc] dropped packet: too short after decrypt");
                             } else {
                                 let seq = u32::from_be_bytes(plaintext[..4].try_into().unwrap());
                                 let pcm = &plaintext[4..];
@@ -741,58 +682,20 @@ pub fn connect_to_vc(
                                     .map(|c| i16::from_be_bytes([c[0], c[1]]) as f32 / 32768.0)
                                     .collect();
 
-                                if samples.len() != PACKET_SAMPLES {
-                                    eprintln!(
-                                        "[vc] receiver: packet {len} bytes, seq {seq}, got {} samples (expected {PACKET_SAMPLES})",
-                                        samples.len()
-                                    );
-                                }
-
                                 packets.insert(seq, samples);
                             }
                         }
-                        Err(e) => {
-                            decrypt_fail += 1;
-                            if decrypt_fail <= 5 || decrypt_fail % 50 == 0 {
-                                eprintln!(
-                                    "[vc] dropped packet: decryption failed ({decrypt_fail} total, {len} bytes, {e})"
-                                );
-                            }
+                        Err(_) => {
+                            eprintln!("[vc] dropped packet: decryption failed");
                         }
                     }
                 }
 
-                if loop_count % 1000 == 0 {
+                if loop_count % 2000 == 0 {
                     eprintln!(
-                        "[vc] receiver: recv {recv_count}, decrypt-fail {decrypt_fail}, buffered {}, prebuffer {is_prebuffering}, expected {expected:?}, pushed {push_count}",
+                        "[vc] receiver: received {recv_count} packets total, {} buffered, prebuffering {is_prebuffering}, expected {expected:?}",
                         packets.len()
                     );
-                }
-
-                // Re-sync to the freshest stream only after a genuine stall
-                // (no packet for a while), not on a momentary empty buffer.
-                if expected.is_some() && !is_prebuffering && !packets.is_empty()
-                    && last_recv_time.elapsed() < Duration::from_millis(300)
-                    && packets.keys().rev().next().map_or(false, |&newest| {
-                        expected
-                            .map(|e| newest.wrapping_sub(e) > 3000)
-                            .unwrap_or(false)
-                    })
-                {
-                    eprintln!(
-                        "[vc] receiver: stream advanced too far, resyncing expect {expected:?} -> newest buffer"
-                    );
-                    expected = packets.keys().rev().next().copied();
-                }
-
-                // Only start prebuffering from scratch when the stream truly dried up.
-                if expected.is_some()
-                    && !is_prebuffering
-                    && last_recv_time.elapsed() > Duration::from_millis(500)
-                {
-                    eprintln!("[vc] receiver: stream stalled, re-prebuffering");
-                    is_prebuffering = true;
-                    expected = None;
                 }
 
                 if is_prebuffering {
@@ -800,9 +703,6 @@ pub fn connect_to_vc(
                         expected = packets.keys().next().copied();
                         is_prebuffering = false;
                         next_frame_time = Instant::now();
-                        eprintln!(
-                            "[vc] receiver: prebuffer done, starting at seq {expected:?} ({recv_count} packets received)"
-                        );
                     } else {
                         thread::sleep(Duration::from_millis(1));
                         continue;
@@ -812,7 +712,6 @@ pub fn connect_to_vc(
                 if Instant::now() >= next_frame_time {
                     if let Some(seq) = expected {
                         if let Some(samples) = packets.remove(&seq) {
-                            let peak = samples.iter().fold(0.0f32, |a, &b| a.max(b.abs()));
                             if samples.len() == PACKET_SAMPLES {
                                 last_good_frame.copy_from_slice(&samples);
                             } else {
@@ -823,25 +722,17 @@ pub fn connect_to_vc(
                                     last_good_frame.resize(PACKET_SAMPLES, 0.0);
                                 }
                             }
+
                             let _ = producer_out.push_slice(&last_good_frame);
-                            push_count += 1;
-                            if push_count == 1 || push_count % 300 == 0 {
-                                eprintln!(
-                                    "[vc] receiver: playing seq {seq}, peak {peak:.4}, pushed {push_count}"
-                                );
-                            }
                             expected = Some(seq.wrapping_add(1));
-                        } else {
-                            // Expected packet not here yet OR skipped (gap). Always
-                            // advance the clock and keep playing (repeat/decay the
-                            // last good frame) so the stream stays continuous. Never
-                            // reset to prebuffer here.
+                        } else if packets.keys().any(|&x| x > seq) {
                             for sample in last_good_frame.iter_mut() {
                                 *sample *= 0.65;
                             }
                             let _ = producer_out.push_slice(&last_good_frame);
-                            push_count += 1;
                             expected = Some(seq.wrapping_add(1));
+                        } else if packets.is_empty() {
+                            is_prebuffering = true;
                         }
                     }
                     next_frame_time += Duration::from_millis(20);
@@ -852,21 +743,29 @@ pub fn connect_to_vc(
         });
     }
 
-    input_stream
-        .play()
-        .map_err(|e| format!("Failed to start input: {e}"))?;
+    *state_inner.session.lock().unwrap() = Some(session);
 
-    *state_inner.session.lock().unwrap() = Some(VoiceSession {
-        input_stream,
-        output_stream,
-        socket,
-        pin,
-        shutdown,
-        current_input_device: config.input_device_name,
-        current_output_device: config.output_device_name,
-        producer_in: shared_producer_in,
-        consumer_out: shared_consumer_out,
-    });
+    // Workaround for Linux devices that don't start capturing/playing until the
+    // stream is (re)initialized. Rebuild both directions a moment after connect.
+    {
+        let state_for_rebuild = Arc::clone(&state_inner);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(1000));
+            let Ok(mut lock) = state_for_rebuild.session.lock() else {
+                return;
+            };
+            if let Some(session) = lock.as_mut() {
+                if session.shutdown.load(Ordering::SeqCst) {
+                    return;
+                }
+                let out = session.current_output_device.clone();
+                let _ = session.setup_output(out, Arc::clone(&state_for_rebuild));
+                let inp = session.current_input_device.clone();
+                let _ = session.setup_input(inp, Arc::clone(&state_for_rebuild));
+                eprintln!("[vc] Reinitialized input/output streams after connect");
+            }
+        });
+    }
 
     Ok(())
 }
@@ -875,9 +774,15 @@ impl Drop for VoiceSession {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::SeqCst);
 
-        let _ = self.input_stream.pause();
+        if let Ok(input) = self.input_stream.lock() {
+            if let Some(stream) = input.as_ref() {
+                let _ = stream.pause();
+            }
+        }
         if let Ok(output) = self.output_stream.lock() {
-            let _ = output.pause();
+            if let Some(stream) = output.as_ref() {
+                let _ = stream.pause();
+            }
         }
 
         eprintln!("[vc] VoiceSession dropped and audio streams paused.");
