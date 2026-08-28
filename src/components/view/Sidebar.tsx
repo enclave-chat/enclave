@@ -68,9 +68,19 @@ export function RenderFeatures({
               const user = appRef.current?.server?.users[pubkey];
               if (!user) return null;
 
+              const isSpeaking =
+                appRef.current?.server?.voiceChatSpeakers[pubkey];
+
               return (
                 <div key={pubkey} className="flex flex-row items-center gap-2">
-                  <Avatar className="h-7 w-7">
+                  <Avatar
+                    className={cn(
+                      "h-7 w-7",
+                      isSpeaking
+                        ? "ring-2 ring-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.25)] bg-card"
+                        : "ring-1 ring-border/60 hover:ring-border",
+                    )}
+                  >
                     <AvatarImage src={user.avatar} />
                     <AvatarFallback>
                       {user?.displayName.slice(0, 1).toUpperCase() ||

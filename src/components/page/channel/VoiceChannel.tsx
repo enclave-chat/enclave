@@ -1,9 +1,8 @@
 import Enclave from "@/app/app";
 import { ChannelPageProps } from "../PageView";
+import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
-import { Phone } from "lucide-react";
 
 export default function VoiceChannel({
   appRef,
@@ -11,11 +10,18 @@ export default function VoiceChannel({
   appRef: React.RefObject<Enclave<ChannelPageProps> | null>;
 }) {
   const channel = appRef.current?.page?.channel;
-  if (!channel) return null;
 
-  const isConnected =
-    appRef.current?.server?.isInVoiceChat &&
-    appRef.current.server.voiceChannelId === channel.id;
+  useEffect(() => {
+    if (!channel || channel.kind !== "voice") return;
+
+    const server = appRef.current?.server;
+
+    if (!server || server.voiceChannelId === channel.id) return;
+
+    appRef.current?.joinVoice(channel);
+  }, [channel?.id]);
+
+  if (!channel) return null;
 
   const speakers =
     appRef.current?.server?.voiceChatSpeakers &&
@@ -96,20 +102,6 @@ export default function VoiceChannel({
           );
         })}
       </div>
-
-      {/* Bottom Control Bar */}
-      {!isConnected && (
-        <footer className="flex items-center justify-center px-4 py-2 border-t border-border/40 bg-card/50 rounded-xl mx-2">
-          <Button
-            variant="default"
-            onClick={() => appRef.current?.joinVoice(channel)}
-            className="flex items-center gap-2 font-medium px-6 bg-emerald-600 hover:bg-emerald-700 text-white"
-          >
-            <Phone className="w-4 h-4" />
-            Join Voice
-          </Button>
-        </footer>
-      )}
     </div>
   );
 }
