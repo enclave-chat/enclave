@@ -46,6 +46,7 @@ pub struct VoiceState {
 #[derive(Default)]
 pub struct VoiceStateInner {
     pub session: Mutex<Option<VoiceSession>>,
+    pub backend_config: Arc<Mutex<BackendConfig>>,
 }
 
 pub struct VoiceSession {
@@ -532,10 +533,7 @@ pub fn connect_to_vc(
         producer_in: Arc::clone(&shared_producer_in),
         consumer_out: Arc::clone(&shared_consumer_out),
 
-        backend_config: Arc::new(Mutex::new(BackendConfig {
-            is_muted: false,
-            is_deaf: false,
-        })),
+        backend_config: Arc::clone(&voice_state.inner.backend_config),
     };
 
     session.setup_input(config.input_device_name.clone(), Arc::clone(&state_inner))?;
@@ -641,6 +639,7 @@ pub fn connect_to_vc(
         let shutdown = shutdown.clone();
         let cipher = cipher.clone();
         let backend_config = session.backend_config.clone();
+        let consumer_out = session.consumer_out.clone();
 
         thread::spawn(move || {
             let mut packets: BTreeMap<u32, Vec<f32>> = BTreeMap::new();
@@ -651,9 +650,17 @@ pub fn connect_to_vc(
             let mut next_frame_time = Instant::now();
 
             while !shutdown.load(Ordering::Relaxed) {
-                let is_deaf = { backend_config.lock().unwrap().is_deaf };
+                let (is_muted, is_deaf) = {
+                    let cfg = backend_config.lock().unwrap();
+                    (cfg.is_muted, cfg.is_deaf)
+                };
 
-                if is_deaf {
+                if is_muted || is_deaf {
+                    // Drop any audio already buffered for playback so that on
+                    // unmute/undeafen we don't replay stale audio from the past.
+                    if let Ok(mut cons) = consumer_out.lock() {
+                        cons.clear();
+                    }
                     packets.clear();
                     is_prebuffering = true;
 
