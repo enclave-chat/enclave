@@ -64,7 +64,7 @@ export function RenderFeatures({
 
       return (
         users && (
-          <div className="flex flex-col gap-2 px-4 pt-0.5">
+          <div className="flex flex-col gap-2 px-4 pt-2">
             {(isCurrentVc ? users : users.slice(0, 15)).map((pubkey) => {
               const user = appRef.current?.server?.users[pubkey];
               if (!user) return null;
