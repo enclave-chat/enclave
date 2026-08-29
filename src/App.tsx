@@ -7,11 +7,11 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "./components/ui/resizable";
-import Sidebar from "./components/view/Sidebar";
 import { ThemeProvider } from "next-themes";
 import Page from "./components/page/PageView";
 import { SettingsDialog } from "./components/settings/SettingsDialog";
 import { TooltipProvider } from "./components/ui/tooltip";
+import Sidebar from "./components/sidebar/Sidebar";
 
 export default function App() {
   const appRef = useRef<Enclave | null>(null);

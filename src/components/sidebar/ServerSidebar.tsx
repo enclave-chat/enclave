@@ -2,7 +2,7 @@ import Enclave from "@/app/app";
 import { Channel, ChannelKind } from "@/lib/types";
 import { ChevronDown, ChevronUp, HashIcon, Volume2Icon } from "lucide-react";
 import { useState } from "react";
-import StatusCard from "./StatusCard";
+import StatusCard from "../view/StatusCard";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 
@@ -115,6 +115,11 @@ export function RenderChannels({
   appRef: React.RefObject<Enclave | null>;
   channels: Channel[];
 }) {
+  const currentChannel =
+    appRef.current?.page?.kind === "channel"
+      ? appRef.current?.page?.channel
+      : undefined;
+
   return channels.map((channel) =>
     channel.kind === "category" ? (
       <RenderCategory key={channel.id} appRef={appRef} channel={channel} />
@@ -123,7 +128,7 @@ export function RenderChannels({
         <div
           className={cn(
             "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
-            channel.id === appRef.current?.page?.channel.id,
+            channel.id === currentChannel?.id,
           )}
           onClick={() => {
             if (!appRef.current) {
@@ -145,7 +150,7 @@ export function RenderChannels({
   );
 }
 
-export default function Sidebar({
+export default function ServerSidebar({
   appRef,
 }: {
   appRef: React.RefObject<Enclave | null>;
