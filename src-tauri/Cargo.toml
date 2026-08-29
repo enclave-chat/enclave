@@ -26,4 +26,7 @@ cpal = { version = "0.18.2", features = ["pipewire", "pulseaudio"] }
 ringbuf = "0.5.1"
 rubato = "5.0.0"
 chacha20poly1305 = "0.11.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2"] }
+tokio = { version = "1", features = ["time", "macros"] }
+quick-xml = "0.37"
 
