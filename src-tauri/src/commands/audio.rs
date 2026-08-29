@@ -245,7 +245,6 @@ where
     let mut resampler = LinearResampler::new();
     let mut mono_buffer = Vec::with_capacity(2048);
     let mut resampled_buffer = Vec::with_capacity(2048);
-    let mut callback_count: u64 = 0;
 
     let inner_input_err = Arc::clone(&state_inner);
 
@@ -253,20 +252,6 @@ where
         .build_input_stream(
             config,
             move |data: &[T], _| {
-                callback_count += 1;
-                if callback_count % 200 == 0 {
-                    let peak: f32 = data
-                        .iter()
-                        .map(|&s| s.to_sample::<f32>().abs())
-                        .fold(0.0f32, f32::max);
-                    eprintln!(
-                        "[vc] input callback #{callback_count}: {} frames, {} ch, peak {:.4}",
-                        data.len() / channels,
-                        channels,
-                        peak
-                    );
-                }
-
                 mono_buffer.clear();
                 resampled_buffer.clear();
 
@@ -352,7 +337,6 @@ where
     let mut raw_mono_samples = Vec::with_capacity(2048);
     let mut resampled_mono = Vec::with_capacity(2048);
     let mut last_sample = 0.0f32;
-    let mut callback_count: u64 = 0;
 
     let inner_output_err = Arc::clone(&state_inner);
 
@@ -360,22 +344,12 @@ where
         .build_output_stream(
             config,
             move |data: &mut [T], _| {
-                callback_count += 1;
-                if callback_count % 200 == 0 {
-                    eprintln!(
-                        "[vc] output callback #{callback_count}: {} frames, {} ch",
-                        data.len() / channels,
-                        channels
-                    );
-                }
-
                 let required_mono_samples = (data.len() / channels) * TARGET_SAMPLE_RATE as usize
                     / native_sample_rate as usize;
 
                 raw_mono_samples.clear();
                 resampled_mono.clear();
 
-                let mut underflow_count = 0usize;
                 if let Ok(mut cons) = consumer.lock() {
                     for _ in 0..required_mono_samples {
                         if let Some(s) = cons.try_pop() {
@@ -385,17 +359,8 @@ where
                             // Exponential decay to prevent clicking when underflowing
                             last_sample *= 0.92;
                             raw_mono_samples.push(last_sample);
-                            underflow_count += 1;
                         }
                     }
-                }
-                if callback_count % 200 == 0 {
-                    eprintln!(
-                        "[vc] output: got {}/{} mono samples ({} underflow)",
-                        required_mono_samples - underflow_count,
-                        required_mono_samples,
-                        underflow_count
-                    );
                 }
 
                 // Resample from 48kHz mono to target native output rate
@@ -635,12 +600,6 @@ pub fn connect_to_vc(
                     };
 
                     loop_count += 1;
-                    if loop_count % 200 == 0 {
-                        eprintln!(
-                            "[vc] sender: buffered {} samples, frame rms {rms:.4}, floor {noise_floor:.4}, thr {threshold:.4}, speaking {is_speaking}, seq {sequence}",
-                            consumer_in.occupied_len()
-                        );
-                    }
 
                     if is_speaking {
                         // sequence goes INSIDE the plaintext now, prefixed before the PCM
@@ -690,8 +649,6 @@ pub fn connect_to_vc(
             let mut last_good_frame = vec![0.0f32; PACKET_SAMPLES];
             let mut udp_buffer = [0u8; MAX_PACKET_SIZE];
             let mut next_frame_time = Instant::now();
-            let mut recv_count: u64 = 0;
-            let mut loop_count: u64 = 0;
 
             while !shutdown.load(Ordering::Relaxed) {
                 let is_deaf = { backend_config.lock().unwrap().is_deaf };
@@ -704,9 +661,7 @@ pub fn connect_to_vc(
                     continue;
                 }
 
-                loop_count += 1;
                 if let Ok(len) = socket.recv(&mut udp_buffer) {
-                    recv_count += 1;
                     match cipher.lock().unwrap().decrypt(&udp_buffer[..len]) {
                         Ok(plaintext) => {
                             if plaintext.len() < 4 {
@@ -727,13 +682,6 @@ pub fn connect_to_vc(
                             eprintln!("[vc] dropped packet: decryption failed");
                         }
                     }
-                }
-
-                if loop_count % 2000 == 0 {
-                    eprintln!(
-                        "[vc] receiver: received {recv_count} packets total, {} buffered, prebuffering {is_prebuffering}, expected {expected:?}",
-                        packets.len()
-                    );
                 }
 
                 if is_prebuffering {
