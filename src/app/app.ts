@@ -36,6 +36,7 @@ export default class Enclave<P = Page> {
   public isSettingsOpen: boolean;
   public forceRender: () => void;
   public page?: P;
+  public sidebarPageKind: "server" | "main";
   public config?: Config;
   public backendConfig: BackendConfig;
 
@@ -47,6 +48,7 @@ export default class Enclave<P = Page> {
       isMuted: false,
       isDeaf: false,
     };
+    this.sidebarPageKind = "main";
   }
 
   public async init() {
@@ -106,6 +108,8 @@ export default class Enclave<P = Page> {
   }
 
   public async connectToServer(hostname: string, isSecure: boolean) {
+    this.sidebarPageKind = "server";
+
     if (this.server) {
       this.server.disconnect();
     }

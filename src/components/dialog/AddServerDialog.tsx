@@ -77,7 +77,7 @@ export function AddServerDialog({ onAdd }: AddServerDialogProps) {
         render={() => (
           <Button
             variant="secondary"
-            className="aspect-square w-full h-auto rounded-full"
+            className="aspect-square w-full h-auto rounded-lg"
             onClick={() => setOpen(true)}
           >
             <PlusIcon />

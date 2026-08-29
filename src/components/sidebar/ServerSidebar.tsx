@@ -2,7 +2,7 @@ import Enclave from "@/app/app";
 import { Channel, ChannelKind } from "@/lib/types";
 import { ChevronDown, ChevronUp, HashIcon, Volume2Icon } from "lucide-react";
 import { useState } from "react";
-import StatusCard from "./StatusCard";
+import StatusCard from "../view/StatusCard";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "../ui/avatar";
 
@@ -150,7 +150,7 @@ export function RenderChannels({
   );
 }
 
-export default function Sidebar({
+export default function ServerSidebar({
   appRef,
 }: {
   appRef: React.RefObject<Enclave | null>;
