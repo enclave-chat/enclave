@@ -49,10 +49,10 @@ const APP_RESOURCES: Resource[] = [
     icon: KeyRound,
   },
   {
-    title: "Encrypted realtime transport",
+    title: "Built by ORUS",
     description:
-      "Client and server exchange secrets over an encrypted WebSocket channel, keeping channel traffic and voice metadata away from eavesdroppers.",
-    url: "https://github.com/paulmillr/noble-ciphers",
+      "One of many privacy-focused, self-hosted applications developed by ORUS using encrypted, decentralized architecture.",
+    url: "https://github.com/orus-dev",
     icon: LockKeyhole,
   },
 ];
@@ -212,10 +212,16 @@ export default function MainPage(_props: {
           </h1>
           <p className="max-w-2xl text-sm text-muted-foreground">
             Enclave is a privacy-focused messenger and voice client built by{" "}
-            <span className="font-medium text-foreground">ORUS</span> using
-            self-hosted servers, local keypair identities, and cryptographic
-            signatures. Nothing here requires an account with a central company
-            — you own your identity and your data.
+            <a
+              className="font-medium text-foreground underline"
+              href="https://github.com/orus-dev"
+              target="_blank"
+            >
+              ORUS
+            </a>{" "}
+            using self-hosted servers, local keypair identities, and
+            cryptographic signatures. Nothing here requires an account with a
+            central company — you own your identity and your data.
           </p>
           <p className="max-w-2xl text-sm text-muted-foreground">
             Select a server on the left and choose a channel to start chatting.
