@@ -656,15 +656,22 @@ pub fn connect_to_vc(
                 };
 
                 if is_muted || is_deaf {
+                    // Keep draining the UDP socket while deafened/muted so stale
+                    // packets don't accumulate in the OS buffer and get replayed
+                    // when we undeafen/unmute. Decrypting and discarding here
+                    // fully consumes the socket backlog.
+                    if let Ok(len) = socket.recv(&mut udp_buffer) {
+                        let _ = cipher.lock().unwrap().decrypt(&udp_buffer[..len]);
+                    }
                     // Drop any audio already buffered for playback so that on
-                    // unmute/undeafen we don't replay stale audio from the past.
+                    // unmute/undeafen we don't replay audio from the past.
                     if let Ok(mut cons) = consumer_out.lock() {
                         cons.clear();
                     }
                     packets.clear();
                     is_prebuffering = true;
 
-                    std::thread::sleep(Duration::from_secs(1));
+                    thread::sleep(Duration::from_millis(1));
                     continue;
                 }
 
