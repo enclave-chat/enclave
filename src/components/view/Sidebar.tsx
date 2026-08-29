@@ -115,6 +115,11 @@ export function RenderChannels({
   appRef: React.RefObject<Enclave | null>;
   channels: Channel[];
 }) {
+  const currentChannel =
+    appRef.current?.page?.kind === "channel"
+      ? appRef.current?.page?.channel
+      : undefined;
+
   return channels.map((channel) =>
     channel.kind === "category" ? (
       <RenderCategory key={channel.id} appRef={appRef} channel={channel} />
@@ -123,7 +128,7 @@ export function RenderChannels({
         <div
           className={cn(
             "w-full hover:bg-accent px-2.5 py-1.5 rounded-md flex gap-2.5 items-center select-none cursor-default text-sm text-muted-foreground",
-            channel.id === appRef.current?.page?.channel.id,
+            channel.id === currentChannel?.id,
           )}
           onClick={() => {
             if (!appRef.current) {

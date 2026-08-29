@@ -263,7 +263,8 @@ export default class Enclave<P = Page> {
 
             const page = this.page as Page | undefined;
 
-            const isInvisibleChannel = page?.channel.id !== channelId;
+            const isInvisibleChannel =
+              page?.kind === "channel" && page?.channel.id !== channelId;
 
             return messages.map((message) => {
               if (
