@@ -650,12 +650,12 @@ pub fn connect_to_vc(
             let mut next_frame_time = Instant::now();
 
             while !shutdown.load(Ordering::Relaxed) {
-                let (is_muted, is_deaf) = {
+                let is_deaf = {
                     let cfg = backend_config.lock().unwrap();
-                    (cfg.is_muted, cfg.is_deaf)
+                    cfg.is_deaf
                 };
 
-                if is_muted || is_deaf {
+                if is_deaf {
                     // Keep draining the UDP socket while deafened/muted so stale
                     // packets don't accumulate in the OS buffer and get replayed
                     // when we undeafen/unmute. Decrypting and discarding here
