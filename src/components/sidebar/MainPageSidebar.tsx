@@ -5,6 +5,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button } from "@/components/ui/button";
 import { RefreshCw, Rss } from "lucide-react";
 import { cn } from "@/lib/utils";
+import StatusCard from "../view/StatusCard";
 
 function formatTime(publishedAt: number): string {
   if (!publishedAt) return "";
@@ -73,7 +74,9 @@ function StaticFallback() {
   );
 }
 
-export default function MainPageSidebar(_props: {
+export default function MainPageSidebar({
+  appRef,
+}: {
   appRef: React.RefObject<Enclave | null>;
 }) {
   const [items, setItems] = useState<NewsItem[] | null>(null);
@@ -98,58 +101,62 @@ export default function MainPageSidebar(_props: {
   }, [load]);
 
   return (
-    <div className="flex h-screen w-full flex-col">
-      <header className="flex items-center justify-between px-3 py-2.5 border-b border-b-border">
-        <h1 className="text-lg font-semibold flex items-center gap-2">
-          <Rss className="h-4 w-4 text-primary" />
-          Security News
-        </h1>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          disabled={loading}
-          onClick={load}
-        >
-          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
-        </Button>
-      </header>
+    <div className="h-full relative w-full @container">
+      <div className="flex h-screen w-full flex-col">
+        <header className="flex items-center justify-between px-3 py-2.5 border-b border-b-border">
+          <h1 className="text-lg font-semibold flex items-center gap-2">
+            <Rss className="h-4 w-4 text-primary" />
+            Security News
+          </h1>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            disabled={loading}
+            onClick={load}
+          >
+            <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+          </Button>
+        </header>
 
-      <section className="flex-1 overflow-y-scroll scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden px-2 py-2">
-        {loading && items === null && (
-          <p className="px-2 py-4 text-sm text-muted-foreground">
-            Loading news…
-          </p>
-        )}
+        <section className="flex-1 overflow-y-scroll scrollbar-none[&::-webkit-scrollbar]:hidden px-2 py-2 mb-28">
+          {loading && items === null && (
+            <p className="px-2 py-4 text-sm text-muted-foreground">
+              Loading news…
+            </p>
+          )}
 
-        {error && !loading && <StaticFallback />}
+          {error && !loading && <StaticFallback />}
 
-        {items && (
-          <div className="flex flex-col gap-0.5">
-            {items.map((item) => (
-              <button
-                key={item.link}
-                className="group flex w-full flex-col gap-1 rounded-md px-2 py-1.5 text-left hover:bg-accent"
-                onClick={() => openUrl(item.link)}
-              >
-                <span className="text-sm text-foreground leading-tight">
-                  {item.title}
-                </span>
-                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="truncate">{item.source}</span>
-                  {item.publishedAt > 0 && (
-                    <>
-                      <span aria-hidden>·</span>
-                      <span className="shrink-0">
-                        {formatTime(item.publishedAt)}
-                      </span>
-                    </>
-                  )}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
+          {items && (
+            <div className="flex flex-col gap-0.5">
+              {items.map((item) => (
+                <button
+                  key={item.link}
+                  className="group flex w-full flex-col gap-1 rounded-md px-2 py-1.5 text-left hover:bg-accent"
+                  onClick={() => openUrl(item.link)}
+                >
+                  <span className="text-sm text-foreground leading-tight">
+                    {item.title}
+                  </span>
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="truncate">{item.source}</span>
+                    {item.publishedAt > 0 && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="shrink-0">
+                          {formatTime(item.publishedAt)}
+                        </span>
+                      </>
+                    )}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+
+      <StatusCard appRef={appRef} />
     </div>
   );
 }

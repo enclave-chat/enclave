@@ -156,20 +156,20 @@ export default function ServerSidebar({
   appRef: React.RefObject<Enclave | null>;
 }) {
   return (
-    <div className="h-screen relative w-full @container">
+    <div className="h-full relative w-full @container">
       {appRef.current?.server?.meta && (
-        <>
+        <div className="h-full">
           <header className="px-3 pt-2.5 pb-2.5 text-lg font-semibold border-b border-b-border">
             <h1>{appRef.current.server.meta.name}</h1>
           </header>
 
-          <section className="px-1.5 pt-3.5 w-full h-full flex flex-col gap-1 overflow-y-scroll scrollbar-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden pb-55">
+          <section className="px-1.5 pt-3.5 w-full h-full flex flex-col gap-1 overflow-y-scroll scrollbar-none [&::-webkit-scrollbar]:hidden mb-28">
             <RenderChannels
               appRef={appRef}
               channels={appRef.current.server.meta.channels}
             />
           </section>
-        </>
+        </div>
       )}
 
       <StatusCard appRef={appRef} />
