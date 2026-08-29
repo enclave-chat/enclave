@@ -49,7 +49,7 @@ export default function App() {
                   minSize="4rem"
                   groupResizeBehavior="preserve-pixel-size"
                 >
-                  <div className="flex">
+                  <div className="h-screen flex overflow-y-hidden">
                     <ServerList appRef={appRef} />
                     <Sidebar appRef={appRef} />
                   </div>

@@ -103,7 +103,7 @@ pub fn get_config(app: AppHandle, state: State<ConfigState>) -> Result<Config, S
     Ok(config)
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BackendConfig {
     pub is_muted: bool,
@@ -115,9 +115,7 @@ pub fn update_backend_config(
     voice_state: State<'_, VoiceState>,
     config: BackendConfig,
 ) -> Result<(), String> {
-    if let Some(v) = &mut *voice_state.inner.session.lock().unwrap() {
-        *v.backend_config.lock().unwrap() = config
-    }
+    *voice_state.inner.backend_config.lock().unwrap() = config;
 
     Ok(())
 }
