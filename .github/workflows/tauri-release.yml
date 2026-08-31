@@ -1,0 +1,92 @@
+name: Tauri Release Build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to upload to (e.g. 0.1.0)"
+        required: false
+        type: string
+
+jobs:
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - run: npm install
+      - run: npm run tauri build
+
+      # --- macOS fix ---
+      - name: Prepare macOS app
+        if: matrix.os == 'macos-latest'
+        run: |
+          APP_PATH=$(find src-tauri/target/release/bundle/macos -name "*.app")
+          APP_NAME=$(basename "$APP_PATH" .app)
+
+          xattr -cr "$APP_PATH"
+          codesign --deep --force --sign - "$APP_PATH"
+
+          ditto -c -k --keepParent "$APP_PATH" "$APP_NAME-macos.zip"
+
+      # --- Get release Tag ---
+      - name: Get release tag
+        id: get_tag
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag }}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          elif [ -z "$TAG" ]; then
+            TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # --- Upload to release ---
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          files: |
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.msi
+            src-tauri/target/release/bundle/**/*.exe
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.rpm
+            *.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
